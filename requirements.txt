@@ -1,0 +1,17 @@
+# Web framework and server
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+
+# Frontend
+streamlit>=1.32.0
+
+# LLM and Agent integration
+langchain>=0.1.14
+langchain-google-genai>=1.0.1
+google-generativeai>=0.4.1
+
+# Utilities and Environment
+pydantic>=2.6.4
+python-dotenv>=1.0.1
+requests>=2.31.0
+
