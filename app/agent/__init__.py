@@ -1,2 +1,5 @@
-"""LangChain Agent logic, prompt templates, and execution state."""
+"""LangChain Agent package for CampusPilot AI."""
 
+from app.agent.booking_agent import CampusBookingAgent
+
+__all__ = ["CampusBookingAgent"]
