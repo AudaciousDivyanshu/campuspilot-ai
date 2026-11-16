@@ -19,7 +19,10 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from app.tools.campus_tools import (
     ALL_CAMPUS_TOOLS,
     check_lab_availability,
+    check_room_availability,
     create_lab_booking,
+    create_room_reservation,
+    list_discussion_rooms,
     list_laboratories,
 )
 from app.tools.date_utils import (
@@ -36,10 +39,19 @@ LAB_NAMES = {
     3: "Networking Lab",
 }
 
+ROOM_NAMES = {
+    1: "Discussion Room 1",
+    2: "Discussion Room 2",
+    3: "Discussion Room 3",
+}
+
 
 def build_system_prompt(date_ctx: Dict[str, str], student_ctx: Optional[Dict[str, str]] = None) -> str:
     """Build a dynamic system prompt with real-time Asia/Kolkata dates and student context."""
-    prompt = f"""You are CampusPilot AI, a helpful, transparent college assistant for campus laboratory bookings.
+    prompt = f"""You are CampusPilot AI, an intelligent, transparent campus assistant for multi-service campus workflows.
+You assist students with two primary booking workflows:
+1. Campus Laboratories (Computer Lab 1, AI Lab, Networking Lab)
+2. Library Discussion Rooms (Discussion Room 1, Discussion Room 2, Discussion Room 3)
 
 CURRENT DATE & TIME (Timezone: {date_ctx['timezone']}):
 - Current Date (Today): {date_ctx['today']} ({date_ctx['today_human']})
@@ -57,24 +69,32 @@ DATE HANDLING RULES:
    - All tool calls taking `booking_date` MUST receive dates strictly in 'YYYY-MM-DD' format. Never guess or hallucinate arbitrary dates.
 
 CRITICAL OPERATIONAL RULES:
-1. USE TOOLS: Always use the provided tools to check actual data. Never guess or hallucinate lab IDs, availability, or booking IDs.
-2. LAB IDENTIFICATION: If a student asks for a lab by name (e.g., 'AI Lab', 'Computer Lab', 'Networking Lab'), use `list_laboratories` to find its correct integer ID.
-3. TIME FORMAT:
-   - Times must be in 24-hour HH:MM format (e.g., 10:00 to 12:00, or convert '10:00 AM' -> '10:00', '12:00 PM' -> '12:00').
-4. HUMAN-IN-THE-LOOP CONFIRMATION (STRICT TWO-STEP PROCESS):
-   - You MUST NEVER call `create_lab_booking` on the first request to book a slot.
-   - Step 1: When a student asks to book a slot (e.g., "Book AI Lab for tomorrow 10:00-12:00"), you must ONLY call `check_lab_availability`.
-   - If the slot is available, you MUST STOP and present the complete confirmation summary:
+1. SERVICE ROUTING & DISTINCTION:
+   - If the student requests a Laboratory (e.g., 'lab', 'computer lab', 'AI lab', 'networking lab'):
+     * Tools to use: `list_laboratories`, `check_lab_availability`, `create_lab_booking`.
+   - If the student requests a Library Discussion Room (e.g., 'discussion room', 'library room', 'study room'):
+     * Tools to use: `list_discussion_rooms`, `check_room_availability`, `create_room_reservation`.
+   - Never mix up laboratory tools with library room tools.
+2. USE TOOLS: Always use the provided tools to check actual data. Never guess or hallucinate IDs, availability, or booking IDs.
+3. IDENTIFICATION:
+   - Use `list_laboratories` to look up lab IDs.
+   - Use `list_discussion_rooms` to look up discussion room IDs.
+4. TIME FORMAT:
+   - Times must be in 24-hour HH:MM format (e.g., 10:00 to 12:00, or convert '10:00 AM' -> '10:00', '2:00 PM' -> '14:00', '4:00 PM' -> '16:00').
+5. HUMAN-IN-THE-LOOP CONFIRMATION (STRICT TWO-STEP PROCESS):
+   - You MUST NEVER call `create_lab_booking` or `create_room_reservation` on the initial request.
+   - Step 1: When a student asks to book a slot, you must ONLY check availability (`check_lab_availability` or `check_room_availability`).
+   - If the slot is available, you MUST STOP and present the complete reservation summary:
      * Student: [Name] (ID: [ID])
-     * Laboratory: [Lab Name] (ID: [Lab ID])
+     * Facility: [Lab / Discussion Room Name] (ID: [ID])
      * Date: [YYYY-MM-DD]
      * Time: [Start Time] to [End Time]
-     Then explicitly ask: "The slot is available. Would you like me to book this slot for you? Please click the Confirm Booking button or reply 'CONFIRM'."
-   - Step 2: ONLY call `create_lab_booking` when the student replies to your summary with explicit confirmation (e.g., 'CONFIRM', 'yes', 'proceed', 'go ahead', 'confirm booking').
-5. CONFLICT HANDLING:
-   - If a slot is unavailable, politely explain that the slot is occupied and offer to check other times or other laboratories.
-6. HONESTY:
-   - Never claim a booking succeeded unless the `create_lab_booking` tool returned a success message with a valid Booking ID.
+     Then explicitly ask: "The requested slot is available. Would you like me to book this for you? Please click the Confirm Booking button or reply 'CONFIRM'."
+   - Step 2: ONLY call the booking creation tool when the student explicitly confirms (e.g., 'CONFIRM', 'yes', 'proceed', 'go ahead', 'confirm booking').
+6. CONFLICT HANDLING:
+   - If a slot is unavailable, politely explain that it is occupied and offer to check other times or other rooms/labs.
+7. HONESTY:
+   - Never claim a reservation succeeded unless the creation tool returned a success message with a valid Booking ID.
    - If an error occurs, explain the exact error clearly to the student.
 """
 
@@ -93,6 +113,9 @@ TOOL_MAP = {
     "list_laboratories": list_laboratories,
     "check_lab_availability": check_lab_availability,
     "create_lab_booking": create_lab_booking,
+    "list_discussion_rooms": list_discussion_rooms,
+    "check_room_availability": check_room_availability,
+    "create_room_reservation": create_room_reservation,
 }
 
 
@@ -200,15 +223,18 @@ class CampusBookingAgent:
                 else:
                     observation = f"Error: Tool '{tool_name}' is not recognized."
 
-                # Check if this tool check verified an available slot
+                # Check if laboratory availability check verified an available slot
                 if tool_name == "check_lab_availability":
                     obs_str = str(observation)
                     if obs_str.startswith("AVAILABLE:"):
                         lab_id = int(tool_args.get("lab_id", 0))
                         lab_name = LAB_NAMES.get(lab_id, f"Lab {lab_id}")
                         pending_booking = {
+                            "service_type": "lab",
+                            "item_id": lab_id,
+                            "item_name": lab_name,
                             "lab_id": lab_id,
-                            "lab_name": lab_name,
+                            "room_id": None,
                             "booking_date": tool_args.get("booking_date"),
                             "start_time": tool_args.get("start_time"),
                             "end_time": tool_args.get("end_time"),
@@ -216,11 +242,31 @@ class CampusBookingAgent:
                             "student_name": (student_context or {}).get("student_name", "Student"),
                         }
                     else:
-                        # Slot is occupied or check failed -> no pending booking
                         pending_booking = None
 
-                # If booking tool was executed, clear pending booking
-                if tool_name == "create_lab_booking":
+                # Check if library discussion room availability check verified an available slot
+                elif tool_name == "check_room_availability":
+                    obs_str = str(observation)
+                    if obs_str.startswith("AVAILABLE:"):
+                        room_id = int(tool_args.get("room_id", 0))
+                        room_name = ROOM_NAMES.get(room_id, f"Discussion Room {room_id}")
+                        pending_booking = {
+                            "service_type": "room",
+                            "item_id": room_id,
+                            "item_name": room_name,
+                            "lab_id": None,
+                            "room_id": room_id,
+                            "booking_date": tool_args.get("booking_date"),
+                            "start_time": tool_args.get("start_time"),
+                            "end_time": tool_args.get("end_time"),
+                            "student_id": (student_context or {}).get("student_id", "Unknown"),
+                            "student_name": (student_context or {}).get("student_name", "Student"),
+                        }
+                    else:
+                        pending_booking = None
+
+                # If any booking creation tool was executed, clear pending booking
+                if tool_name in ("create_lab_booking", "create_room_reservation"):
                     pending_booking = None
 
                 steps_executed.append(

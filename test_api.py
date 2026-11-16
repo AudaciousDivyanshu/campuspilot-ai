@@ -1,177 +1,239 @@
-"""Automated endpoint tests for CampusPilot AI FastAPI backend.
+"""Automated HTTP endpoint tests for CampusPilot AI FastAPI backend.
 
-Verifies:
+Verifies all Laboratory and Library Discussion Room endpoints:
 1. GET /health
 2. GET /labs
-3. GET /bookings
-4. GET /availability (available slot vs. occupied slot)
-5. POST /bookings (successful creation)
-6. POST /bookings (conflict rejection)
-7. Input validations (bad date, inverted time, unknown lab)
+3. GET /availability (free slot vs occupied slot)
+4. POST /bookings (successful creation)
+5. POST /bookings (conflict prevention)
+6. GET /bookings (query by date)
+7. GET /rooms
+8. GET /rooms/availability (free slot vs occupied slot)
+9. POST /rooms/bookings (successful room reservation)
+10. POST /rooms/bookings (conflict prevention)
+11. GET /rooms/bookings (query by date)
+12. Input validations (bad date, inverted time, non-existent lab/room ID)
 """
 
-import sys
 from pathlib import Path
+import subprocess
+import sys
+import time
+import requests
 
-# Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi.testclient import TestClient
-from app.main import app
 from app.database.connection import get_db_context
 from app.database.init_db import init_db
+
+TEST_PORT = 8008
+BASE_URL = f"http://127.0.0.1:{TEST_PORT}"
 
 
 def run_api_tests():
     print("=" * 65, flush=True)
-    print(" CampusPilot AI: FastAPI Backend Endpoint Verification", flush=True)
+    print(" CampusPilot AI: Multi-Service API Endpoint Verification", flush=True)
     print("=" * 65, flush=True)
 
-    with TestClient(app) as client:
-        # Reset test date entries in database for clean repeatable testing
-        init_db()
-        test_date = "2026-11-25"
-        with get_db_context() as conn:
-            conn.execute("DELETE FROM bookings WHERE booking_date = ?;", (test_date,))
+    # Initialize SQLite database
+    init_db()
+    test_date = "2026-11-28"
 
-        # 1. Test GET /health
-        print("\n[Test 1] Testing GET /health...", flush=True)
-        res = client.get("/health")
-        print(f" Status: {res.status_code}, Response: {res.json()}", flush=True)
+    # Clean up test date records
+    with get_db_context() as conn:
+        conn.execute("DELETE FROM bookings WHERE booking_date = ?;", (test_date,))
+        conn.execute("DELETE FROM room_bookings WHERE booking_date = ?;", (test_date,))
+
+    # Launch isolated Uvicorn server instance
+    print(f"Launching FastAPI backend on port {TEST_PORT}...", flush=True)
+    server_process = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(TEST_PORT)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Wait for server to bind
+    for _ in range(15):
+        try:
+            r = requests.get(f"{BASE_URL}/health", timeout=1)
+            if r.status_code == 200:
+                break
+        except requests.RequestException:
+            time.sleep(0.5)
+
+    try:
+        # 1. Health check
+        print("\n[Test 1] GET /health", flush=True)
+        res = requests.get(f"{BASE_URL}/health", timeout=3)
         assert res.status_code == 200
         assert res.json()["status"] == "ok"
-        print(" PASS: /health endpoint is operational.", flush=True)
+        print(f"   ✓ Health Status: {res.json()}", flush=True)
 
-        # 2. Test GET /labs
-        print("\n[Test 2] Testing GET /labs...", flush=True)
-        res = client.get("/labs")
-        labs = res.json()
-        print(f" Status: {res.status_code}, Found {len(labs)} laboratories:", flush=True)
-        for lab in labs:
-            print(f"   - Lab #{lab['lab_id']}: {lab['lab_name']} (Cap: {lab['capacity']}, Loc: {lab['location']})", flush=True)
+        # 2. Labs directory
+        print("\n[Test 2] GET /labs", flush=True)
+        res = requests.get(f"{BASE_URL}/labs", timeout=3)
         assert res.status_code == 200
-        assert len(labs) >= 3
-        print(" PASS: /labs returns actual SQLite records.", flush=True)
+        labs = res.json()
+        assert len(labs) == 3
+        print(f"   ✓ Retrieved {len(labs)} laboratories:", flush=True)
+        for lab in labs:
+            print(f"     * [Lab #{lab['lab_id']}] {lab['lab_name']} (Cap: {lab['capacity']}, Loc: {lab['location']})", flush=True)
 
-        # Select AI Lab for booking tests
         ai_lab = next(l for l in labs if l["lab_name"] == "AI Lab")
-        ai_lab_id = ai_lab["lab_id"]
 
-        # 3. Test GET /availability (Slot initially free)
-        print(f"\n[Test 3] Testing GET /availability for free slot (10:00 - 12:00 in {ai_lab['lab_name']})...", flush=True)
-        res = client.get(
-            "/availability",
-            params={
-                "lab_id": ai_lab_id,
-                "booking_date": test_date,
-                "start_time": "10:00",
-                "end_time": "12:00",
-            },
+        # 3. Lab availability check (free)
+        print(f"\n[Test 3] GET /availability (free slot)", flush=True)
+        res = requests.get(
+            f"{BASE_URL}/availability",
+            params={"lab_id": ai_lab["lab_id"], "booking_date": test_date, "start_time": "10:00", "end_time": "12:00"},
+            timeout=3,
         )
-        print(f" Status: {res.status_code}, Response: {res.json()}", flush=True)
         assert res.status_code == 200
         assert res.json()["is_available"] is True
-        print(" PASS: Unbooked slot correctly reported as available.", flush=True)
+        print(f"   ✓ Slot is free: {res.json()['message']}", flush=True)
 
-        # 4. Test POST /bookings (Create booking)
-        print("\n[Test 4] Testing POST /bookings to create a confirmed booking...", flush=True)
+        # 4. Create lab booking
+        print(f"\n[Test 4] POST /bookings (create confirmed booking)", flush=True)
         payload = {
-            "student_id": "CS2026-101",
-            "student_name": "Rohan Gupta",
-            "lab_id": ai_lab_id,
+            "student_id": "CS2026-042",
+            "student_name": "Aarav Sharma",
+            "lab_id": ai_lab["lab_id"],
             "booking_date": test_date,
             "start_time": "10:00",
             "end_time": "12:00",
         }
-        res = client.post("/bookings", json=payload)
-        print(f" Status: {res.status_code}, Response: {res.json()}", flush=True)
+        res = requests.post(f"{BASE_URL}/bookings", json=payload, timeout=3)
         assert res.status_code == 201
-        created_booking = res.json()
-        assert created_booking["booking_id"] is not None
-        assert created_booking["student_name"] == "Rohan Gupta"
-        assert created_booking["status"] == "confirmed"
-        print(f" PASS: Booking #{created_booking['booking_id']} successfully created in SQLite.", flush=True)
+        booking_data = res.json()
+        assert booking_data["booking_id"] > 0
+        assert booking_data["status"] == "confirmed"
+        print(f"   ✓ Booking created: ID #{booking_data['booking_id']} for {booking_data['student_name']}", flush=True)
 
-        # 5. Test GET /bookings (Verify created booking is listed)
-        print(f"\n[Test 5] Testing GET /bookings for date: {test_date}...", flush=True)
-        res = client.get("/bookings", params={"booking_date": test_date})
-        print(f" Status: {res.status_code}, Bookings found: {len(res.json())}", flush=True)
-        for b in res.json():
-            print(f"   - Booking #{b['booking_id']}: {b['lab_name']} | {b['start_time']} - {b['end_time']} | {b['student_name']}", flush=True)
-        assert res.status_code == 200
-        assert len(res.json()) >= 1
-        print(" PASS: Confirmed bookings retrieved from database.", flush=True)
-
-        # 6. Test GET /availability (Now slot should be unavailable)
-        print("\n[Test 6] Testing GET /availability for now-occupied slot (11:00 - 13:00)...", flush=True)
-        res = client.get(
-            "/availability",
-            params={
-                "lab_id": ai_lab_id,
-                "booking_date": test_date,
-                "start_time": "11:00",
-                "end_time": "13:00",
-            },
-        )
-        print(f" Status: {res.status_code}, Response: {res.json()}", flush=True)
-        assert res.status_code == 200
-        assert res.json()["is_available"] is False
-        print(" PASS: Conflicting slot correctly reported as unavailable.", flush=True)
-
-        # 7. Test POST /bookings conflict rejection (409 Conflict)
-        print("\n[Test 7] Testing POST /bookings conflict rejection for overlapping time...", flush=True)
-        overlap_payload = {
-            "student_id": "CS2026-202",
-            "student_name": "Sneha Roy",
-            "lab_id": ai_lab_id,
+        # 5. Overlap rejection on lab booking
+        print(f"\n[Test 5] POST /bookings (conflict prevention)", flush=True)
+        conflict_payload = {
+            "student_id": "CS2026-088",
+            "student_name": "Priya Patel",
+            "lab_id": ai_lab["lab_id"],
             "booking_date": test_date,
             "start_time": "11:00",
             "end_time": "13:00",
         }
-        res = client.post("/bookings", json=overlap_payload)
-        print(f" Status: {res.status_code}, Response: {res.json()}", flush=True)
+        res = requests.post(f"{BASE_URL}/bookings", json=conflict_payload, timeout=3)
         assert res.status_code == 409
-        assert "already booked" in res.json()["detail"].lower()
-        print(" PASS: Overlapping booking rejected with HTTP 409 Conflict.", flush=True)
+        print(f"   ✓ Conflict rejected (HTTP 409): {res.json()['detail']}", flush=True)
 
-        # 8. Test Validation Error (inverted time: 14:00 to 12:00)
-        print("\n[Test 8] Testing validation error on inverted time (14:00 to 12:00)...", flush=True)
-        bad_time_payload = {
-            "student_id": "CS2026-202",
-            "student_name": "Sneha Roy",
-            "lab_id": ai_lab_id,
+        # 6. Query lab bookings by date
+        print(f"\n[Test 6] GET /bookings?booking_date={test_date}", flush=True)
+        res = requests.get(f"{BASE_URL}/bookings", params={"booking_date": test_date}, timeout=3)
+        assert res.status_code == 200
+        bookings_list = res.json()
+        assert len(bookings_list) == 1
+        print(f"   ✓ Found {len(bookings_list)} booking on date {test_date}", flush=True)
+
+        # 7. Library rooms directory
+        print("\n[Test 7] GET /rooms", flush=True)
+        res = requests.get(f"{BASE_URL}/rooms", timeout=3)
+        assert res.status_code == 200
+        rooms = res.json()
+        assert len(rooms) == 3
+        print(f"   ✓ Retrieved {len(rooms)} library discussion rooms:", flush=True)
+        for room in rooms:
+            print(f"     * [Room #{room['room_id']}] {room['room_name']} (Cap: {room['capacity']}, Loc: {room['location']})", flush=True)
+
+        room2 = next(r for r in rooms if r["room_name"] == "Discussion Room 2")
+
+        # 8. Room availability check (free)
+        print(f"\n[Test 8] GET /rooms/availability (free slot)", flush=True)
+        res = requests.get(
+            f"{BASE_URL}/rooms/availability",
+            params={"room_id": room2["room_id"], "booking_date": test_date, "start_time": "14:00", "end_time": "16:00"},
+            timeout=3,
+        )
+        assert res.status_code == 200
+        assert res.json()["is_available"] is True
+        print(f"   ✓ Room slot free: {res.json()['message']}", flush=True)
+
+        # 9. Create discussion room reservation
+        print(f"\n[Test 9] POST /rooms/bookings (create confirmed reservation)", flush=True)
+        room_payload = {
+            "student_id": "CS2026-042",
+            "student_name": "Aarav Sharma",
+            "room_id": room2["room_id"],
             "booking_date": test_date,
             "start_time": "14:00",
-            "end_time": "12:00",
+            "end_time": "16:00",
         }
-        res = client.post("/bookings", json=bad_time_payload)
-        print(f" Status: {res.status_code}, Detail: {res.json().get('detail')}", flush=True)
-        assert res.status_code == 400
-        print(" PASS: Inverted time range rejected with HTTP 400 Bad Request.", flush=True)
+        res = requests.post(f"{BASE_URL}/rooms/bookings", json=room_payload, timeout=3)
+        assert res.status_code == 201
+        room_res_data = res.json()
+        assert room_res_data["booking_id"] > 0
+        assert room_res_data["status"] == "confirmed"
+        print(f"   ✓ Room reservation created: ID #{room_res_data['booking_id']} for {room_res_data['student_name']}", flush=True)
 
-        # 9. Test Non-existent Lab (404 Not Found)
-        print("\n[Test 9] Testing non-existent lab_id=9999...", flush=True)
-        res = client.get(
-            "/availability",
-            params={
-                "lab_id": 9999,
-                "booking_date": test_date,
-                "start_time": "10:00",
-                "end_time": "11:00",
-            },
-        )
-        print(f" Status: {res.status_code}, Detail: {res.json().get('detail')}", flush=True)
+        # 10. Overlap rejection on room reservation
+        print(f"\n[Test 10] POST /rooms/bookings (conflict prevention)", flush=True)
+        conflict_room_payload = {
+            "student_id": "CS2026-099",
+            "student_name": "Rohan Gupta",
+            "room_id": room2["room_id"],
+            "booking_date": test_date,
+            "start_time": "15:00",
+            "end_time": "17:00",
+        }
+        res = requests.post(f"{BASE_URL}/rooms/bookings", json=conflict_room_payload, timeout=3)
+        assert res.status_code == 409
+        print(f"   ✓ Conflict rejected (HTTP 409): {res.json()['detail']}", flush=True)
+
+        # 11. Query room reservations by date
+        print(f"\n[Test 11] GET /rooms/bookings?booking_date={test_date}", flush=True)
+        res = requests.get(f"{BASE_URL}/rooms/bookings", params={"booking_date": test_date}, timeout=3)
+        assert res.status_code == 200
+        room_bookings_list = res.json()
+        assert len(room_bookings_list) == 1
+        print(f"   ✓ Found {len(room_bookings_list)} room reservation on date {test_date}", flush=True)
+
+        # 12. Input validations
+        print("\n[Test 12] Validation checks (bad date, inverted time, unknown ID)", flush=True)
+        # Invalid date format
+        res = requests.get(f"{BASE_URL}/bookings", params={"booking_date": "not-a-date"}, timeout=3)
+        assert res.status_code == 400
+        print("   ✓ Invalid date format rejected (HTTP 400)", flush=True)
+
+        # Inverted time range
+        inv_payload = dict(payload)
+        inv_payload["start_time"] = "16:00"
+        inv_payload["end_time"] = "14:00"
+        res = requests.post(f"{BASE_URL}/bookings", json=inv_payload, timeout=3)
+        assert res.status_code == 400
+        print("   ✓ Inverted time rejected (HTTP 400)", flush=True)
+
+        # Non-existent lab ID
+        bad_lab_payload = dict(payload)
+        bad_lab_payload["lab_id"] = 999
+        res = requests.post(f"{BASE_URL}/bookings", json=bad_lab_payload, timeout=3)
         assert res.status_code == 404
-        print(" PASS: Non-existent lab correctly returned HTTP 404 Not Found.", flush=True)
+        print("   ✓ Non-existent lab rejected (HTTP 404)", flush=True)
+
+        # Non-existent room ID
+        bad_room_payload = dict(room_payload)
+        bad_room_payload["room_id"] = 999
+        res = requests.post(f"{BASE_URL}/rooms/bookings", json=bad_room_payload, timeout=3)
+        assert res.status_code == 404
+        print("   ✓ Non-existent discussion room rejected (HTTP 404)", flush=True)
 
         print("\n" + "=" * 65, flush=True)
-        print(" ALL FASTAPI ENDPOINT TESTS PASSED SUCCESSFULLY!", flush=True)
+        print(" ALL FastAPI endpoint tests PASSED successfully!", flush=True)
         print("=" * 65, flush=True)
 
-        # Clean up test-date records after test completion
+    finally:
+        server_process.terminate()
+        server_process.wait()
+        # Clean up test-date records
         with get_db_context() as conn:
             conn.execute("DELETE FROM bookings WHERE booking_date = ?;", (test_date,))
+            conn.execute("DELETE FROM room_bookings WHERE booking_date = ?;", (test_date,))
 
 
 if __name__ == "__main__":

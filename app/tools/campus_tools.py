@@ -141,5 +141,137 @@ def create_lab_booking(
         return f"Failed to connect to backend server at {BASE_URL}. Error: {str(e)}"
 
 
+# ==========================================
+# LIBRARY DISCUSSION ROOM TOOLS
+# ==========================================
+
+@tool
+def list_discussion_rooms() -> str:
+    """Retrieve all available library discussion rooms, their IDs, capacity, and location.
+
+    Use this tool whenever the student asks what library discussion rooms exist or
+    needs to find a discussion room ID based on its name (e.g. Discussion Room 1, Discussion Room 2).
+    """
+    try:
+        response = requests.get(f"{BASE_URL}/rooms", timeout=5)
+        if response.status_code == 200:
+            rooms = response.json()
+            if not rooms:
+                return "No library discussion rooms found in the campus system."
+            formatted = ["Available Library Discussion Rooms:"]
+            for room in rooms:
+                formatted.append(
+                    f"- Room ID {room['room_id']}: '{room['room_name']}' | Capacity: {room['capacity']} seats | Location: {room.get('location', 'N/A')}"
+                )
+            return "\n".join(formatted)
+        return f"Error fetching discussion rooms: HTTP {response.status_code} - {response.text}"
+    except requests.exceptions.RequestException as e:
+        return f"Failed to connect to backend server at {BASE_URL}. Is FastAPI running? Error: {str(e)}"
+
+
+@tool
+def check_room_availability(room_id: int, booking_date: str, start_time: str, end_time: str) -> str:
+    """Check if a specific library discussion room is available for a given date and time range.
+
+    Args:
+        room_id: The integer ID of the discussion room (e.g., 1, 2, 3).
+        booking_date: The date in 'YYYY-MM-DD' format (e.g., '2026-11-20').
+        start_time: The start time in 24-hour 'HH:MM' format (e.g., '14:00').
+        end_time: The end time in 24-hour 'HH:MM' format (e.g., '16:00').
+
+    Returns:
+        A message indicating whether the room slot is available or occupied.
+    """
+    try:
+        resolved_date = resolve_date_string(booking_date)
+        params = {
+            "room_id": room_id,
+            "booking_date": resolved_date,
+            "start_time": start_time.strip(),
+            "end_time": end_time.strip(),
+        }
+        response = requests.get(f"{BASE_URL}/rooms/availability", params=params, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("is_available"):
+                return f"AVAILABLE: Slot {start_time}-{end_time} on {resolved_date} for Room ID {room_id} is free."
+            else:
+                return f"UNAVAILABLE: Slot {start_time}-{end_time} on {resolved_date} for Room ID {room_id} is already booked."
+        elif response.status_code == 404:
+            return f"Room ID {room_id} not found. Use list_discussion_rooms to verify valid room IDs."
+        elif response.status_code == 400:
+            return f"Invalid request: {response.json().get('detail', response.text)}"
+        return f"Error checking room availability: HTTP {response.status_code} - {response.text}"
+    except requests.exceptions.RequestException as e:
+        return f"Failed to connect to backend server at {BASE_URL}. Error: {str(e)}"
+
+
+@tool
+def create_room_reservation(
+    student_id: str,
+    student_name: str,
+    room_id: int,
+    booking_date: str,
+    start_time: str,
+    end_time: str,
+) -> str:
+    """Create a confirmed library discussion room reservation in the system.
+
+    CRITICAL RULE: Call this tool ONLY after the student has explicitly confirmed
+    the reservation details (date, time, discussion room, student ID, and student name).
+
+    Args:
+        student_id: The student's ID/Roll number (e.g., 'CS2026-042').
+        student_name: The student's full name (e.g., 'Aarav Sharma').
+        room_id: The integer ID of the discussion room (e.g., 1, 2, 3).
+        booking_date: The date in 'YYYY-MM-DD' format (e.g., '2026-11-20').
+        start_time: The start time in 24-hour 'HH:MM' format (e.g., '14:00').
+        end_time: The end time in 24-hour 'HH:MM' format (e.g., '16:00').
+
+    Returns:
+        Confirmation details with booking ID or conflict error message.
+    """
+    try:
+        resolved_date = resolve_date_string(booking_date)
+        payload = {
+            "student_id": student_id.strip(),
+            "student_name": student_name.strip(),
+            "room_id": int(room_id),
+            "booking_date": resolved_date,
+            "start_time": start_time.strip(),
+            "end_time": end_time.strip(),
+        }
+        response = requests.post(f"{BASE_URL}/rooms/bookings", json=payload, timeout=5)
+        if response.status_code == 201:
+            data = response.json()
+            return (
+                f"DISCUSSION ROOM RESERVED!\n"
+                f"- Booking ID: {data.get('booking_id')}\n"
+                f"- Student: {data.get('student_name')} ({data.get('student_id')})\n"
+                f"- Discussion Room: {data.get('room_name')} (ID: {data.get('room_id')})\n"
+                f"- Date: {data.get('booking_date')}\n"
+                f"- Time: {data.get('start_time')} to {data.get('end_time')}\n"
+                f"- Status: {data.get('status')}"
+            )
+        elif response.status_code == 409:
+            detail = response.json().get("detail", "Time slot conflict.")
+            return f"RESERVATION REJECTED (CONFLICT): {detail}"
+        elif response.status_code == 400:
+            detail = response.json().get("detail", "Invalid input.")
+            return f"RESERVATION FAILED: {detail}"
+        elif response.status_code == 404:
+            return f"RESERVATION FAILED: Room ID {room_id} does not exist."
+        return f"Error creating room reservation: HTTP {response.status_code} - {response.text}"
+    except requests.exceptions.RequestException as e:
+        return f"Failed to connect to backend server at {BASE_URL}. Error: {str(e)}"
+
+
 # Export tools list
-ALL_CAMPUS_TOOLS = [list_laboratories, check_lab_availability, create_lab_booking]
+ALL_CAMPUS_TOOLS = [
+    list_laboratories,
+    check_lab_availability,
+    create_lab_booking,
+    list_discussion_rooms,
+    check_room_availability,
+    create_room_reservation,
+]

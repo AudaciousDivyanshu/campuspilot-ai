@@ -70,3 +70,66 @@ class BookingCreateRequest(BaseModel):
             raise ValueError("Time must be in 24-hour HH:MM format (e.g., 09:30, 14:00).")
         return value
 
+
+# ==========================================
+# LIBRARY DISCUSSION ROOM SCHEMAS
+# ==========================================
+
+class RoomResponse(BaseModel):
+    """Library discussion room details response."""
+    room_id: int
+    room_name: str
+    capacity: int
+    location: Optional[str] = None
+
+
+class RoomBookingResponse(BaseModel):
+    """Discussion room reservation confirmation response."""
+    booking_id: int
+    student_id: str
+    student_name: str
+    room_id: int
+    room_name: str
+    booking_date: str
+    start_time: str
+    end_time: str
+    status: str
+
+
+class RoomAvailabilityResponse(BaseModel):
+    """Discussion room slot availability response."""
+    room_id: int
+    booking_date: str
+    start_time: str
+    end_time: str
+    is_available: bool
+    message: str
+
+
+class RoomBookingCreateRequest(BaseModel):
+    """Request payload for reserving a library discussion room."""
+    student_id: str = Field(..., min_length=1, description="Student ID/Roll number", examples=["CS2026-042"])
+    student_name: str = Field(..., min_length=1, description="Student full name", examples=["Aarav Sharma"])
+    room_id: int = Field(..., gt=0, description="Target discussion room ID", examples=[1])
+    booking_date: str = Field(..., description="Date in YYYY-MM-DD format", examples=["2026-11-20"])
+    start_time: str = Field(..., description="Start time in HH:MM format (24-hour)", examples=["14:00"])
+    end_time: str = Field(..., description="End time in HH:MM format (24-hour)", examples=["16:00"])
+
+    @field_validator("booking_date")
+    @classmethod
+    def validate_date_format(cls, value: str) -> str:
+        value = value.strip()
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("booking_date must be in YYYY-MM-DD format (e.g., 2026-11-20).")
+        return value
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def validate_time_format(cls, value: str) -> str:
+        value = value.strip()
+        if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", value):
+            raise ValueError("Time must be in 24-hour HH:MM format (e.g., 09:30, 14:00).")
+        return value
+

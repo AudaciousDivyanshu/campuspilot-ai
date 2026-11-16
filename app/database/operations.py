@@ -246,3 +246,230 @@ def create_booking(
             "status": status.strip(),
         }
 
+
+# ==========================================
+# LIBRARY DISCUSSION ROOM OPERATIONS
+# ==========================================
+
+def get_all_discussion_rooms(db_path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Retrieve all library discussion rooms.
+
+    Returns:
+        List of dictionaries containing room_id, room_name, capacity, and location.
+    """
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT room_id, room_name, capacity, location
+            FROM discussion_rooms
+            ORDER BY room_id ASC;
+            """
+        )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_discussion_room_by_id(room_id: int, db_path: str | Path | None = None) -> dict[str, Any] | None:
+    """Retrieve a single discussion room by its primary key ID."""
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT room_id, room_name, capacity, location
+            FROM discussion_rooms
+            WHERE room_id = ?;
+            """,
+            (room_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_room_bookings_by_date(
+    booking_date: str,
+    room_id: int | None = None,
+    db_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Retrieve confirmed discussion room bookings for a specific date, optionally filtered by room_id.
+
+    Args:
+        booking_date: Date string in 'YYYY-MM-DD' format.
+        room_id: Optional room ID filter.
+        db_path: Optional path to SQLite database.
+
+    Returns:
+        List of booking dictionaries including room_name.
+    """
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        if room_id is not None:
+            cursor.execute(
+                """
+                SELECT b.booking_id, b.student_id, b.student_name, b.room_id,
+                       r.room_name, b.booking_date, b.start_time, b.end_time, b.status
+                FROM room_bookings b
+                JOIN discussion_rooms r ON b.room_id = r.room_id
+                WHERE b.booking_date = ? AND b.room_id = ? AND b.status = 'confirmed'
+                ORDER BY b.start_time ASC;
+                """,
+                (booking_date, room_id),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT b.booking_id, b.student_id, b.student_name, b.room_id,
+                       r.room_name, b.booking_date, b.start_time, b.end_time, b.status
+                FROM room_bookings b
+                JOIN discussion_rooms r ON b.room_id = r.room_id
+                WHERE b.booking_date = ? AND b.status = 'confirmed'
+                ORDER BY b.room_id ASC, b.start_time ASC;
+                """,
+                (booking_date,),
+            )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def check_room_booking_overlap(
+    room_id: int,
+    booking_date: str,
+    start_time: str,
+    end_time: str,
+    exclude_booking_id: int | None = None,
+    db_path: str | Path | None = None,
+) -> bool:
+    """Check whether a requested time interval overlaps with an existing confirmed room booking.
+
+    Interval overlap condition:
+        start_req < end_exist AND end_req > start_exist
+
+    Args:
+        room_id: Target discussion room ID.
+        booking_date: Date string ('YYYY-MM-DD').
+        start_time: Start time string ('HH:MM').
+        end_time: End time string ('HH:MM').
+        exclude_booking_id: Optional booking ID to exclude.
+        db_path: Optional database path.
+
+    Returns:
+        True if an overlapping confirmed booking exists; False otherwise.
+    """
+    validate_time_range(start_time, end_time)
+
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        if exclude_booking_id is not None:
+            cursor.execute(
+                """
+                SELECT booking_id
+                FROM room_bookings
+                WHERE room_id = ?
+                  AND booking_date = ?
+                  AND status = 'confirmed'
+                  AND booking_id != ?
+                  AND ? < end_time
+                  AND ? > start_time
+                LIMIT 1;
+                """,
+                (room_id, booking_date, exclude_booking_id, start_time, end_time),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT booking_id
+                FROM room_bookings
+                WHERE room_id = ?
+                  AND booking_date = ?
+                  AND status = 'confirmed'
+                  AND ? < end_time
+                  AND ? > start_time
+                LIMIT 1;
+                """,
+                (room_id, booking_date, start_time, end_time),
+            )
+        return cursor.fetchone() is not None
+
+
+def create_room_booking(
+    student_id: str,
+    student_name: str,
+    room_id: int,
+    booking_date: str,
+    start_time: str,
+    end_time: str,
+    status: str = "confirmed",
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Create a new library discussion room reservation after verifying room existence and slot availability.
+
+    Args:
+        student_id: Student roll/ID number.
+        student_name: Full name of the student.
+        room_id: ID of the discussion room being booked.
+        booking_date: Date of booking ('YYYY-MM-DD').
+        start_time: Start time ('HH:MM').
+        end_time: End time ('HH:MM').
+        status: Initial status, default 'confirmed'.
+        db_path: Optional path to SQLite database.
+
+    Returns:
+        Dictionary containing all details of the newly created room reservation.
+
+    Raises:
+        ValueError: If parameters are invalid, room does not exist, or slot conflicts with an existing booking.
+    """
+    validate_time_range(start_time, end_time)
+
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Verify discussion room exists
+        cursor.execute("SELECT room_id, room_name FROM discussion_rooms WHERE room_id = ?;", (room_id,))
+        room = cursor.fetchone()
+        if not room:
+            raise ValueError(f"Discussion room with room_id={room_id} does not exist.")
+
+        # Check for overlapping confirmed reservations
+        cursor.execute(
+            """
+            SELECT booking_id, student_name, start_time, end_time
+            FROM room_bookings
+            WHERE room_id = ?
+              AND booking_date = ?
+              AND status = 'confirmed'
+              AND ? < end_time
+              AND ? > start_time
+            LIMIT 1;
+            """,
+            (room_id, booking_date, start_time, end_time),
+        )
+        conflict = cursor.fetchone()
+        if conflict:
+            raise ValueError(
+                f"Booking conflict: Room '{room['room_name']}' is already booked by "
+                f"{conflict['student_name']} from {conflict['start_time']} to {conflict['end_time']}."
+            )
+
+        # Insert new room booking
+        cursor.execute(
+            """
+            INSERT INTO room_bookings (student_id, student_name, room_id, booking_date, start_time, end_time, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+            """,
+            (student_id.strip(), student_name.strip(), room_id, booking_date.strip(), start_time.strip(), end_time.strip(), status.strip()),
+        )
+        new_booking_id = cursor.lastrowid
+
+        return {
+            "booking_id": new_booking_id,
+            "student_id": student_id.strip(),
+            "student_name": student_name.strip(),
+            "room_id": room_id,
+            "room_name": room["room_name"],
+            "booking_date": booking_date.strip(),
+            "start_time": start_time.strip(),
+            "end_time": end_time.strip(),
+            "status": status.strip(),
+        }
+

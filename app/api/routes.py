@@ -11,13 +11,22 @@ from app.api.schemas import (
     BookingResponse,
     HealthResponse,
     LabResponse,
+    RoomAvailabilityResponse,
+    RoomBookingCreateRequest,
+    RoomBookingResponse,
+    RoomResponse,
 )
 from app.database import (
     check_booking_overlap,
+    check_room_booking_overlap,
     create_booking,
+    create_room_booking,
+    get_all_discussion_rooms,
     get_all_laboratories,
     get_bookings_by_date,
+    get_discussion_room_by_id,
     get_laboratory_by_id,
+    get_room_bookings_by_date,
     validate_time_range,
 )
 
@@ -177,6 +186,138 @@ def create_new_booking(payload: BookingCreateRequest) -> BookingResponse:
             end_time=payload.end_time,
         )
         return BookingResponse(**created)
+    except ValueError as e:
+        err_msg = str(e)
+        if "does not exist" in err_msg:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err_msg)
+        elif "conflict" in err_msg.lower() or "already booked" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=err_msg)
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)
+
+
+# ==========================================
+# LIBRARY DISCUSSION ROOM ENDPOINTS
+# ==========================================
+
+@router.get(
+    "/rooms",
+    response_model=List[RoomResponse],
+    summary="Get all library discussion rooms",
+    description="Retrieves all registered discussion rooms from the SQLite database.",
+)
+def list_rooms() -> List[RoomResponse]:
+    """Fetch all library discussion rooms."""
+    rooms = get_all_discussion_rooms()
+    return [RoomResponse(**r) for r in rooms]
+
+
+@router.get(
+    "/rooms/bookings",
+    response_model=List[RoomBookingResponse],
+    summary="Get room bookings by date",
+    description="Retrieves confirmed discussion room reservations for a specified date from SQLite.",
+)
+def list_room_bookings(
+    booking_date: str = Query(
+        ...,
+        description="Booking date in YYYY-MM-DD format",
+        examples=["2026-11-20"],
+    ),
+    room_id: Optional[int] = Query(
+        None,
+        description="Optional filter by discussion room ID",
+        examples=[1],
+    ),
+) -> List[RoomBookingResponse]:
+    """Retrieve discussion room reservations for a given date."""
+    valid_date = _validate_date_string(booking_date)
+    bookings = get_room_bookings_by_date(valid_date, room_id=room_id)
+    return [RoomBookingResponse(**b) for b in bookings]
+
+
+@router.get(
+    "/rooms/availability",
+    response_model=RoomAvailabilityResponse,
+    summary="Check discussion room slot availability",
+    description="Checks actual SQLite bookings to verify if a requested discussion room slot is available.",
+)
+def check_room_availability_endpoint(
+    room_id: int = Query(..., gt=0, description="Target discussion room ID", examples=[1]),
+    booking_date: str = Query(..., description="Date in YYYY-MM-DD format", examples=["2026-11-20"]),
+    start_time: str = Query(..., description="Start time in HH:MM format", examples=["14:00"]),
+    end_time: str = Query(..., description="End time in HH:MM format", examples=["16:00"]),
+) -> RoomAvailabilityResponse:
+    """Check if a library discussion room slot is available or occupied."""
+    valid_date = _validate_date_string(booking_date)
+    valid_start = _validate_time_string(start_time, "start_time")
+    valid_end = _validate_time_string(end_time, "end_time")
+
+    # Verify discussion room exists
+    room = get_discussion_room_by_id(room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Discussion room with room_id={room_id} not found.",
+        )
+
+    # Validate start_time < end_time
+    try:
+        validate_time_range(valid_start, valid_end)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Check for actual database overlap
+    is_overlapping = check_room_booking_overlap(
+        room_id=room_id,
+        booking_date=valid_date,
+        start_time=valid_start,
+        end_time=valid_end,
+    )
+
+    is_available = not is_overlapping
+    message = (
+        f"Slot {valid_start}-{valid_end} is available in {room['room_name']} on {valid_date}."
+        if is_available
+        else f"Slot {valid_start}-{valid_end} is unavailable in {room['room_name']} due to an existing reservation."
+    )
+
+    return RoomAvailabilityResponse(
+        room_id=room_id,
+        booking_date=valid_date,
+        start_time=valid_start,
+        end_time=valid_end,
+        is_available=is_available,
+        message=message,
+    )
+
+
+@router.post(
+    "/rooms/bookings",
+    response_model=RoomBookingResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new discussion room reservation",
+    description="Validates input, checks for conflicts, and saves a confirmed discussion room booking to SQLite.",
+)
+def create_new_room_booking(payload: RoomBookingCreateRequest) -> RoomBookingResponse:
+    """Create a new confirmed discussion room reservation."""
+    # Validate start_time < end_time
+    try:
+        validate_time_range(payload.start_time, payload.end_time)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Create the reservation through our database operations module
+    try:
+        created = create_room_booking(
+            student_id=payload.student_id,
+            student_name=payload.student_name,
+            room_id=payload.room_id,
+            booking_date=payload.booking_date,
+            start_time=payload.start_time,
+            end_time=payload.end_time,
+        )
+        return RoomBookingResponse(**created)
     except ValueError as e:
         err_msg = str(e)
         if "does not exist" in err_msg:
