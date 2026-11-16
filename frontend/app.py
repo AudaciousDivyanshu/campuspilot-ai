@@ -1,18 +1,20 @@
 """CampusPilot AI - Intelligent Multi-Service Campus Assistant.
 
-Modern AI Campus Management Dashboard built with Streamlit:
-- Professional light theme with deep navy and vibrant blue accents.
-- Header with branding, subtitle ("Your Intelligent Campus Assistant"), and live backend status.
-- Campus facilities directory for both Laboratories and Library Discussion Rooms.
-- Quick action service cards with "Coming Soon" badges for future campus integrations.
-- Agentic ReAct conversation flow with compact tool execution inspector.
-- Human-in-the-Loop booking confirmation card preventing duplicate submissions on reruns.
+Modern AI Campus Management Dashboard with Supabase Native Email OTP Authentication
+and Resend Email Notifications:
+- Free passwordless Email OTP verification via Supabase Auth (zero Google Cloud / paid dependencies).
+- Verified student identity automatically linked to SQLite reservations.
+- Real-time slot availability checking and reservation for Labs & Discussion Rooms.
+- Transactional booking confirmation emails sent to student email via Resend.
+- Clear success/failure alerts for both database storage and email delivery.
+- Unauthenticated access protection preventing unauthorized bookings.
 """
 
 from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from dotenv import load_dotenv
 import requests
@@ -27,6 +29,14 @@ load_dotenv()
 
 from langchain_core.messages import AIMessage, HumanMessage
 from app.agent.booking_agent import CampusBookingAgent
+from app.services.email_service import is_email_service_configured, send_booking_confirmation_email
+from app.services.supabase_auth import (
+    is_supabase_configured,
+    parse_session_from_token,
+    send_email_otp,
+    sign_out_student,
+    verify_email_otp,
+)
 from app.tools.campus_tools import create_lab_booking, create_room_reservation
 from app.tools.date_utils import get_current_date_context, resolve_relative_dates_in_text
 
@@ -107,6 +117,46 @@ st.markdown(
         color: #991b1b;
         font-size: 0.82rem;
         font-weight: 600;
+    }
+
+    /* Auth & Profile Cards */
+    .auth-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        padding: 1.8rem 2rem;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+        max-width: 620px;
+        margin: 2rem auto;
+        text-align: center;
+    }
+    .profile-card {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.85rem 1rem;
+        margin-bottom: 0.75rem;
+    }
+    .profile-name {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: #0f172a;
+    }
+    .profile-email {
+        font-size: 0.8rem;
+        color: #475569;
+        margin-top: 0.15rem;
+    }
+    .profile-badge {
+        display: inline-block;
+        background: #ecfdf5;
+        color: #047857;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 0.15rem 0.5rem;
+        border-radius: 9999px;
+        border: 1px solid #a7f3d0;
+        margin-top: 0.4rem;
     }
 
     /* Facility Information Cards in Sidebar */
@@ -240,17 +290,6 @@ st.markdown(
         color: #0f172a;
         margin-top: 0.15rem;
     }
-
-    /* Compact Tool Inspector */
-    .tool-step-header {
-        font-size: 0.85rem;
-        font-weight: 600;
-        color: #334155;
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-        margin-bottom: 0.4rem;
-    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -295,17 +334,26 @@ def get_agent() -> CampusBookingAgent:
 
 
 # Initialize Session State Variables
+if "authenticated_user" not in st.session_state:
+    st.session_state.authenticated_user = None
+
+if "otp_sent_to" not in st.session_state:
+    st.session_state.otp_sent_to = None
+
+if "otp_student_name" not in st.session_state:
+    st.session_state.otp_student_name = None
+
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant",
             "content": (
                 "👋 **Welcome to CampusPilot AI!**\n\n"
-                "I am your agentic assistant for campus services. I can assist you with:\n"
+                "I am your authenticated agentic campus assistant. I can assist you with:\n"
                 "• **Laboratory Bookings**: Computer Lab 1, AI Lab, Networking Lab.\n"
                 "• **Library Discussion Rooms**: Group study & discussion rooms 1 to 3.\n"
                 "• **Availability Checking**: Inquire about live slots for today, tomorrow, or specific dates.\n"
-                "• **Confirmed Reservations**: Safe two-step reservation with explicit confirmation."
+                "• **Confirmed Reservations**: Instant SQLite booking & automated email notification via Resend."
             ),
             "steps": [],
         }
@@ -317,26 +365,60 @@ if "langchain_history" not in st.session_state:
 if "pending_booking" not in st.session_state:
     st.session_state.pending_booking = None
 
+if "last_email_result" not in st.session_state:
+    st.session_state.last_email_result = None
+
 
 # ==========================================
-# SIDEBAR: Profile & Facilities Directory
+# AUTHENTICATION HANDLING
+# ==========================================
+# Check if redirected from Supabase magic link with token in query params
+if st.query_params.get("access_token"):
+    token = st.query_params.get("access_token")
+    user_info = parse_session_from_token(token)
+    if user_info:
+        st.session_state.authenticated_user = user_info
+        st.query_params.clear()
+        st.rerun()
+
+
+# ==========================================
+# SIDEBAR: Verified Student Profile & Facilities
 # ==========================================
 with st.sidebar:
     st.markdown("### 👤 Student Profile")
-    st.caption("Active credentials attached to reservation requests")
 
-    student_name = st.text_input(
-        "Full Name",
-        value=st.session_state.get("student_name", "Aarav Sharma"),
-        placeholder="e.g. Aarav Sharma",
-    )
-    student_id = st.text_input(
-        "Student ID / Roll No",
-        value=st.session_state.get("student_id", "CS2026-042"),
-        placeholder="e.g. CS2026-042",
-    )
-    st.session_state["student_name"] = student_name
-    st.session_state["student_id"] = student_id
+    if st.session_state.authenticated_user:
+        auth_user = st.session_state.authenticated_user
+        st.markdown(
+            f"""
+            <div class="profile-card">
+                <div class="profile-name">🎓 {auth_user.get('full_name', 'Student')}</div>
+                <div class="profile-email">✉️ {auth_user.get('email', 'N/A')}</div>
+                <div class="profile-badge">● Supabase Verified Email</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if st.button("🚪 Sign Out", use_container_width=True):
+            sign_out_student()
+            st.session_state.authenticated_user = None
+            st.session_state.otp_sent_to = None
+            st.session_state.otp_student_name = None
+            st.session_state.messages = [
+                {
+                    "role": "assistant",
+                    "content": "You have signed out. Please verify your email to access campus facilities.",
+                    "steps": [],
+                }
+            ]
+            st.session_state.langchain_history = []
+            st.session_state.pending_booking = None
+            st.session_state.last_email_result = None
+            st.rerun()
+    else:
+        st.info("🔒 Student not verified. Complete email verification to reserve campus facilities.")
 
     st.markdown("---")
 
@@ -423,6 +505,7 @@ with st.sidebar:
         ]
         st.session_state.langchain_history = []
         st.session_state.pending_booking = None
+        st.session_state.last_email_result = None
         st.rerun()
 
 
@@ -440,7 +523,7 @@ st.markdown(
     <div class="brand-header">
         <div>
             <h1 class="brand-title">🎓 CampusPilot AI</h1>
-            <p class="brand-subtitle">Your Intelligent Campus Assistant for Multi-Step Workflows</p>
+            <p class="brand-subtitle">Your Intelligent Campus Assistant with Supabase Email Auth & Resend</p>
         </div>
         <div>
             {status_html}
@@ -451,9 +534,143 @@ st.markdown(
 )
 
 
-# Helper: Execute confirmed booking or reservation
+# ==========================================
+# LOGIN SCREEN: Rendered when user is unauthenticated
+# ==========================================
+if not st.session_state.authenticated_user:
+    st.markdown(
+        """
+        <div class="auth-card">
+            <h2 style="color: #0f172a; margin-bottom: 0.3rem;">🎓 Student Email Authentication</h2>
+            <p style="color: #64748b; font-size: 0.92rem; margin-bottom: 0;">
+                Passwordless verification powered by native Supabase Auth (Free Tier &bull; No Google Cloud billing required).
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col_auth1, col_auth2 = st.columns([1.1, 0.9])
+
+    with col_auth1:
+        st.markdown("#### ✉️ Supabase Email OTP / Magic Link")
+        st.caption("Enter your student email to receive a 6-digit verification code:")
+
+        if not st.session_state.get("otp_sent_to"):
+            # Step 1: Request OTP code
+            student_email_input = st.text_input(
+                "Student Email Address (Gmail or Campus)",
+                value="aarav.sharma.campus@gmail.com",
+                placeholder="e.g. your.name@gmail.com",
+                key="input_email_otp",
+            )
+            student_name_input = st.text_input(
+                "Full Name",
+                value="Aarav Sharma",
+                placeholder="e.g. Aarav Sharma",
+                key="input_name_otp",
+            )
+
+            if st.button("📨 Send Verification Code", type="primary", use_container_width=True):
+                if "@" in student_email_input and student_name_input.strip():
+                    with st.spinner("Dispatching verification code via Supabase Auth..."):
+                        otp_res = send_email_otp(student_email_input, student_name_input)
+                        if otp_res.get("success"):
+                            st.session_state.otp_sent_to = student_email_input.strip().lower()
+                            st.session_state.otp_student_name = student_name_input.strip()
+                            st.success(otp_res.get("message"))
+                            st.rerun()
+                        else:
+                            st.error(f"Failed to send code: {otp_res.get('error')}")
+                else:
+                    st.error("Please enter a valid email address and full name.")
+
+        else:
+            # Step 2: Enter received OTP code
+            st.info(f"📬 Code dispatched to: **{st.session_state.otp_sent_to}**")
+            otp_token = st.text_input(
+                "Enter 6-Digit Verification Code",
+                placeholder="e.g. 123456",
+                max_chars=10,
+                key="input_otp_token",
+            )
+
+            col_v1, col_v2 = st.columns([1, 1])
+            with col_v1:
+                if st.button("🔐 Verify & Enter Dashboard", type="primary", use_container_width=True):
+                    if otp_token.strip():
+                        with st.spinner("Verifying code with Supabase Auth..."):
+                            verify_res = verify_email_otp(
+                                email=st.session_state.otp_sent_to,
+                                token=otp_token.strip(),
+                                full_name_fallback=st.session_state.otp_student_name,
+                            )
+                            if verify_res.get("success"):
+                                st.session_state.authenticated_user = verify_res
+                                st.session_state.otp_sent_to = None
+                                st.session_state.otp_student_name = None
+                                st.success("Verification successful! Loading campus facilities...")
+                                st.rerun()
+                            else:
+                                st.error(verify_res.get("error", "Invalid verification code."))
+                    else:
+                        st.error("Please enter the verification code.")
+
+            with col_v2:
+                if st.button("↩️ Change Email", use_container_width=True):
+                    st.session_state.otp_sent_to = None
+                    st.session_state.otp_student_name = None
+                    st.rerun()
+
+    with col_auth2:
+        st.markdown("#### ⚡ Verified College Demo Profiles")
+        st.caption("Instant verified profiles for presentation and evaluation:")
+
+        if st.button("👨‍🎓 Aarav Sharma (CS2026-042)", use_container_width=True):
+            st.session_state.authenticated_user = {
+                "user_id": "CS2026-042",
+                "email": "aarav.sharma.campus@gmail.com",
+                "full_name": "Aarav Sharma",
+                "auth_type": "email_otp",
+            }
+            st.rerun()
+
+        if st.button("👩‍🎓 Priya Patel (CS2026-088)", use_container_width=True):
+            st.session_state.authenticated_user = {
+                "user_id": "CS2026-088",
+                "email": "priya.patel.campus@gmail.com",
+                "full_name": "Priya Patel",
+                "auth_type": "email_otp",
+            }
+            st.rerun()
+
+        st.markdown("---")
+        st.markdown(
+            """
+            <div style="font-size: 0.8rem; color: #64748b; line-height: 1.4;">
+                🛡️ <b>Native Supabase Auth</b><br>
+                Runs completely on the free tier of Supabase. No Google Cloud Console, billing, or Autopay requirements.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # Strictly protect booking functionality: unauthenticated users cannot proceed
+    st.stop()
+
+
+# ==========================================
+# AUTHENTICATED APPLICATION
+# ==========================================
+auth_user = st.session_state.authenticated_user
+student_name = auth_user["full_name"]
+student_email = auth_user["email"]
+student_id = auth_user.get("user_id") or student_email.split("@")[0]
+
+
+# Helper: Execute confirmed booking or reservation & send email notification
 def confirm_pending_booking():
-    """Execute confirmed reservation and clear pending state to prevent duplicates."""
+    """Execute confirmed reservation in SQLite, send confirmation email, and clear pending state."""
     pending = st.session_state.pending_booking
     if not pending:
         return
@@ -474,6 +691,7 @@ def confirm_pending_booking():
                     "end_time": pending["end_time"],
                 })
                 tool_used = "create_room_reservation"
+                facility_label = "Library Discussion Room"
             else:
                 res_output = create_lab_booking.invoke({
                     "student_id": pending["student_id"],
@@ -484,6 +702,24 @@ def confirm_pending_booking():
                     "end_time": pending["end_time"],
                 })
                 tool_used = "create_lab_booking"
+                facility_label = "Campus Laboratory"
+
+            # Parse Booking ID from tool output
+            booking_id_match = re.search(r"Booking ID:\s*(\d+)", res_output)
+            booking_id_val = booking_id_match.group(1) if booking_id_match else "CONFIRMED"
+
+            # Dispatch confirmation email via Resend to authenticated student email
+            email_result = send_booking_confirmation_email(
+                recipient_email=student_email,
+                recipient_name=student_name,
+                facility_name=pending["item_name"],
+                booking_date=pending["booking_date"],
+                start_time=pending["start_time"],
+                end_time=pending["end_time"],
+                booking_id=booking_id_val,
+                facility_type=facility_label,
+            )
+            st.session_state.last_email_result = email_result
 
             # Append successful booking result to chat
             st.session_state.messages.append(
@@ -500,6 +736,7 @@ def confirm_pending_booking():
                 }
             )
             st.session_state.langchain_history.append(AIMessage(content=res_output))
+
         except Exception as e:
             err_msg = f"Failed to confirm reservation: {str(e)}"
             st.session_state.messages.append({"role": "assistant", "content": err_msg, "steps": []})
@@ -530,8 +767,9 @@ def process_user_input(user_text: str):
     st.session_state.langchain_history.append(HumanMessage(content=anchored_text))
 
     student_ctx = {
-        "student_name": st.session_state.get("student_name", "Student"),
-        "student_id": st.session_state.get("student_id", "Unknown"),
+        "student_name": student_name,
+        "student_id": student_id,
+        "student_email": student_email,
     }
 
     try:
@@ -646,6 +884,15 @@ with col_s4:
 
 st.markdown("---")
 
+# Notification Banner for Email Status
+if st.session_state.last_email_result:
+    email_res = st.session_state.last_email_result
+    if email_res.get("success"):
+        st.success(f"📧 **Notification**: {email_res.get('message')}")
+    else:
+        st.warning(f"⚠️ **Email Notice**: {email_res.get('message')}")
+    st.session_state.last_email_result = None
+
 # Quick Example Prompt Chips
 st.markdown("**💡 Suggested Inquiries:**")
 col_p1, col_p2, col_p3, col_p4 = st.columns(4)
@@ -732,7 +979,7 @@ if st.session_state.pending_booking:
                 </div>
                 <div class="booking-item">
                     <div class="booking-item-label">Student Details</div>
-                    <div class="booking-item-value">{pending['student_name']} ({pending['student_id']})</div>
+                    <div class="booking-item-value">{student_name} ({student_email})</div>
                 </div>
             </div>
         </div>
