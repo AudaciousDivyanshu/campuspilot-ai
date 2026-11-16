@@ -97,6 +97,10 @@ def run_agent_tests():
         print(" ALL AGENT TESTS PASSED SUCCESSFULLY!", flush=True)
         print("=" * 65, flush=True)
 
+        # Clean up test records
+        with get_db_context() as conn:
+            conn.execute("DELETE FROM bookings WHERE booking_date = ?;", (test_date,))
+
     finally:
         print("\nStopping FastAPI server subprocess...", flush=True)
         server_process.terminate()

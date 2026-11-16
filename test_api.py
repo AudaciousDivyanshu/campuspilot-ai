@@ -169,6 +169,10 @@ def run_api_tests():
         print(" ALL FASTAPI ENDPOINT TESTS PASSED SUCCESSFULLY!", flush=True)
         print("=" * 65, flush=True)
 
+        # Clean up test-date records after test completion
+        with get_db_context() as conn:
+            conn.execute("DELETE FROM bookings WHERE booking_date = ?;", (test_date,))
+
 
 if __name__ == "__main__":
     run_api_tests()

@@ -69,9 +69,9 @@ def check_lab_availability(lab_id: int, booking_date: str, start_time: str, end_
         if response.status_code == 200:
             data = response.json()
             if data.get("is_available"):
-                return f"AVAILABLE: Slot {start_time}-{end_time} on {booking_date} for Lab ID {lab_id} is free."
+                return f"AVAILABLE: Slot {start_time}-{end_time} on {resolved_date} for Lab ID {lab_id} is free."
             else:
-                return f"UNAVAILABLE: Slot {start_time}-{end_time} on {booking_date} for Lab ID {lab_id} is already booked."
+                return f"UNAVAILABLE: Slot {start_time}-{end_time} on {resolved_date} for Lab ID {lab_id} is already booked."
         elif response.status_code == 404:
             return f"Lab ID {lab_id} not found. Use list_laboratories to verify valid lab IDs."
         elif response.status_code == 400:

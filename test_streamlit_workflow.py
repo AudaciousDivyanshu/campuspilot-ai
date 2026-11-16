@@ -166,6 +166,10 @@ def run_streamlit_workflow_test():
         print(" ALL STREAMLIT RUNTIME WORKFLOW TESTS PASSED!", flush=True)
         print("=" * 65, flush=True)
 
+        # Clean up test records
+        with get_db_context() as conn:
+            conn.execute("DELETE FROM bookings WHERE booking_date = ?;", (tomorrow_str,))
+
     finally:
         server.terminate()
         server.wait()

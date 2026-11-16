@@ -152,6 +152,10 @@ def run_tests() -> None:
     print(" All database tests and verifications PASSED successfully!")
     print("=" * 65)
 
+    # Clean up test-date records after test completion
+    with get_db_context() as conn:
+        conn.execute("DELETE FROM bookings WHERE booking_date = ?;", (test_date,))
+
 
 if __name__ == "__main__":
     run_tests()
