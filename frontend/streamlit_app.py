@@ -20,10 +20,17 @@ from dotenv import load_dotenv
 import requests
 import streamlit as st
 
-# Add project root to sys.path so app packages are importable
+# Add project root to sys.path so backend app package is importable
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+PROJECT_ROOT_STR = str(PROJECT_ROOT)
+if sys.path[0] != PROJECT_ROOT_STR:
+    if PROJECT_ROOT_STR in sys.path:
+        sys.path.remove(PROJECT_ROOT_STR)
+    sys.path.insert(0, PROJECT_ROOT_STR)
+
+# Ensure 'app' points to the backend package, not any shadowed module
+if "app" in sys.modules and not hasattr(sys.modules["app"], "__path__"):
+    del sys.modules["app"]
 
 load_dotenv()
 

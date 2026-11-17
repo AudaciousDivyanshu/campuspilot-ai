@@ -96,6 +96,17 @@ Update `.env`:
 GEMINI_API_KEY=your_actual_gemini_api_key
 ```
 
+### 4. Run the Application
+Start the FastAPI backend:
+```bash
+uvicorn app.main:app --port 8000 --reload
+```
+
+Start the Streamlit frontend:
+```bash
+streamlit run frontend/streamlit_app.py
+```
+
 ---
 
 ## 📜 Next Steps
