@@ -327,3 +327,120 @@ def create_new_room_booking(payload: RoomBookingCreateRequest) -> RoomBookingRes
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)
 
+
+# ==========================================
+# AGENTIC RECOMMENDATION & FACILITY METADATA
+# ==========================================
+
+@router.get(
+    "/recommendations",
+    summary="Recommend facilities based on capacity and availability",
+    description="Finds and ranks candidate facilities that fit the requested capacity without time conflicts.",
+)
+def get_recommendations(
+    facility_type: str = Query("lab", description="Type of facility: 'lab' or 'room'"),
+    booking_date: str = Query(..., description="Date in YYYY-MM-DD format"),
+    start_time: str = Query(..., description="Start time in HH:MM format"),
+    end_time: str = Query(..., description="End time in HH:MM format"),
+    min_capacity: int = Query(1, ge=1, description="Minimum seating or workstation capacity"),
+    purpose: str = Query("", description="Optional purpose of the session"),
+):
+    from app.database import recommend_matching_facilities
+    valid_date = _validate_date_string(booking_date)
+    valid_start = _validate_time_string(start_time, "start_time")
+    valid_end = _validate_time_string(end_time, "end_time")
+    try:
+        validate_time_range(valid_start, valid_end)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return recommend_matching_facilities(
+        facility_type=facility_type,
+        booking_date=valid_date,
+        start_time=valid_start,
+        end_time=valid_end,
+        min_capacity=min_capacity,
+        purpose=purpose,
+    )
+
+
+@router.post(
+    "/cancel",
+    summary="Cancel a reservation",
+    description="Marks a booking or room reservation as cancelled.",
+)
+def cancel_booking_endpoint(
+    booking_id: int = Query(..., gt=0),
+    service_type: str = Query("Laboratory", description="'Laboratory' or 'Library Room'"),
+):
+    from app.database import cancel_reservation
+    success = cancel_reservation(booking_id=booking_id, service_type=service_type)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found or already cancelled.")
+    return {"status": "success", "message": f"Reservation #{booking_id} cancelled successfully."}
+
+
+@router.get(
+    "/facilities/{facility_type}/{facility_id}",
+    summary="Get facility details with equipment",
+    description="Retrieves full metadata including hardware/software and amenities.",
+)
+def get_facility_info(facility_type: str, facility_id: int):
+    from app.database import get_facility_details_by_id
+    info = get_facility_details_by_id(facility_type=facility_type, facility_id=facility_id)
+    if not info:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facility not found.")
+    return info
+
+
+# ==========================================
+# USER PROFILE & IDENTITY ENDPOINTS
+# ==========================================
+
+@router.get(
+    "/users/{user_id}/profile",
+    summary="Get student profile",
+    description="Retrieves the registered student profile for an authenticated user ID.",
+)
+def get_user_profile_endpoint(user_id: str):
+    from app.database import get_student_profile
+    profile = get_student_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found.")
+    return profile
+
+
+@router.post(
+    "/users/profile",
+    summary="Create or update student profile",
+    description="Upserts student profile data without creating duplicates.",
+)
+def upsert_user_profile_endpoint(payload: dict):
+    from app.database import upsert_student_profile
+    user_id = payload.get("user_id")
+    email = payload.get("email")
+    full_name = payload.get("full_name", "")
+    department = payload.get("department", "Engineering & Technology")
+
+    if not user_id or not email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id and email are required.")
+
+    return upsert_student_profile(
+        user_id=user_id,
+        full_name=full_name,
+        email=email,
+        department=department,
+    )
+
+
+@router.get(
+    "/users/{user_id}/bookings",
+    summary="Get user-specific bookings",
+    description="Retrieves confirmed and past reservations strictly for the requested student ID.",
+)
+def get_user_bookings_endpoint(user_id: str):
+    from app.database import get_all_student_reservations
+    return get_all_student_reservations(student_id=user_id)
+
+
+

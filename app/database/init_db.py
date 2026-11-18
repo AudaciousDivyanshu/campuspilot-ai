@@ -106,6 +106,70 @@ def create_tables(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # Student profiles table for dynamic identity management
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS student_profiles (
+            user_id TEXT PRIMARY KEY,
+            full_name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            department TEXT DEFAULT 'Engineering & Technology',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+
+SAMPLE_PROFILES = [
+    {
+        "user_id": "student_arnav_001",
+        "full_name": "Arnav",
+        "email": "arnav@campus.edu",
+        "department": "Computer Science & Engineering",
+    },
+    {
+        "user_id": "student_rahul_002",
+        "full_name": "Rahul",
+        "email": "rahul@campus.edu",
+        "department": "AI & Data Science",
+    },
+]
+
+
+def seed_sample_student_profiles(conn: sqlite3.Connection) -> int:
+    """Insert initial sample demonstration student profiles safely without creating duplicates."""
+    cursor = conn.cursor()
+    inserted_count = 0
+    for prof in SAMPLE_PROFILES:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO student_profiles (user_id, full_name, email, department)
+            VALUES (?, ?, ?, ?);
+            """,
+            (prof["user_id"], prof["full_name"], prof["email"], prof["department"]),
+        )
+        if cursor.rowcount > 0:
+            inserted_count += 1
+
+    # Seed isolated sample reservations for Arnav and Rahul
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO bookings (booking_id, student_id, student_name, lab_id, booking_date, start_time, end_time, status)
+        VALUES (101, 'student_arnav_001', 'Arnav', 1, '2026-11-20', '10:00', '12:00', 'confirmed');
+        """
+    )
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO room_bookings (booking_id, student_id, student_name, room_id, booking_date, start_time, end_time, status)
+        VALUES (201, 'student_rahul_002', 'Rahul', 2, '2026-11-20', '14:00', '16:00', 'confirmed');
+        """
+    )
+
+    return inserted_count
+
+
+
 
 def seed_sample_laboratories(conn: sqlite3.Connection) -> int:
     """Insert initial sample laboratories safely without creating duplicates.
@@ -161,6 +225,7 @@ def init_db(db_path: str | Path | None = None) -> Path:
         create_tables(conn)
         seed_sample_laboratories(conn)
         seed_sample_discussion_rooms(conn)
+        seed_sample_student_profiles(conn)
 
     return target_path
 

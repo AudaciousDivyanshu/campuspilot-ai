@@ -473,3 +473,319 @@ def create_room_booking(
             "status": status.strip(),
         }
 
+
+def get_all_student_reservations(student_id: str, student_name: str | None = None, db_path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Retrieve all laboratory and library room reservations for a student strictly by their unique student_id."""
+    clean_id = (student_id or "").strip()
+    clean_name = (student_name or "").strip()
+    
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        
+        # Lab bookings
+        if clean_id:
+            cursor.execute(
+                """
+                SELECT b.booking_id, b.student_id, b.student_name, b.lab_id as facility_id,
+                       l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
+                       b.booking_date, b.start_time, b.end_time, b.status
+                FROM bookings b
+                JOIN labs l ON b.lab_id = l.lab_id
+                WHERE b.student_id = ?
+                ORDER BY b.booking_date DESC, b.start_time DESC;
+                """,
+                (clean_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT b.booking_id, b.student_id, b.student_name, b.lab_id as facility_id,
+                       l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
+                       b.booking_date, b.start_time, b.end_time, b.status
+                FROM bookings b
+                JOIN labs l ON b.lab_id = l.lab_id
+                WHERE b.student_name = ?
+                ORDER BY b.booking_date DESC, b.start_time DESC;
+                """,
+                (clean_name,),
+            )
+        lab_rows = [dict(row) for row in cursor.fetchall()]
+
+        # Room bookings
+        if clean_id:
+            cursor.execute(
+                """
+                SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
+                       r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
+                       rb.booking_date, rb.start_time, rb.end_time, rb.status
+                FROM room_bookings rb
+                JOIN discussion_rooms r ON rb.room_id = r.room_id
+                WHERE rb.student_id = ?
+                ORDER BY rb.booking_date DESC, rb.start_time DESC;
+                """,
+                (clean_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
+                       r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
+                       rb.booking_date, rb.start_time, rb.end_time, rb.status
+                FROM room_bookings rb
+                JOIN discussion_rooms r ON rb.room_id = r.room_id
+                WHERE rb.student_name = ?
+                ORDER BY rb.booking_date DESC, rb.start_time DESC;
+                """,
+                (clean_name,),
+            )
+        room_rows = [dict(row) for row in cursor.fetchall()]
+
+        combined = lab_rows + room_rows
+        combined.sort(key=lambda x: (x.get("booking_date", ""), x.get("start_time", "")), reverse=True)
+        return combined
+
+
+def get_student_profile(user_id: str, db_path: str | Path | None = None) -> dict[str, Any] | None:
+    """Retrieve student profile by unique user_id."""
+    clean_id = (user_id or "").strip()
+    if not clean_id:
+        return None
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT user_id, full_name, email, department, created_at, updated_at
+            FROM student_profiles
+            WHERE user_id = ?;
+            """,
+            (clean_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_student_profile_by_email(email: str, db_path: str | Path | None = None) -> dict[str, Any] | None:
+    """Retrieve student profile by email address."""
+    clean_email = (email or "").strip().lower()
+    if not clean_email:
+        return None
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT user_id, full_name, email, department, created_at, updated_at
+            FROM student_profiles
+            WHERE LOWER(email) = ?;
+            """,
+            (clean_email,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def upsert_student_profile(
+    user_id: str,
+    full_name: str,
+    email: str,
+    department: str = "Engineering & Technology",
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Insert or update a student profile ensuring no duplicates during repeated sessions."""
+    clean_id = (user_id or "").strip()
+    clean_email = (email or "").strip().lower()
+    clean_name = (full_name or "").strip()
+    clean_dept = (department or "Engineering & Technology").strip()
+
+    if not clean_id or not clean_email:
+        raise ValueError("Both user_id and email are required for student profile.")
+
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT user_id, full_name, email, department
+            FROM student_profiles
+            WHERE user_id = ? OR LOWER(email) = ?;
+            """,
+            (clean_id, clean_email),
+        )
+        existing = cursor.fetchone()
+        if existing:
+            target_id = existing["user_id"]
+            updated_name = clean_name if clean_name else existing["full_name"]
+            cursor.execute(
+                """
+                UPDATE student_profiles
+                SET full_name = ?,
+                    email = ?,
+                    department = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?;
+                """,
+                (updated_name, clean_email, clean_dept, target_id),
+            )
+            return {
+                "user_id": target_id,
+                "full_name": updated_name,
+                "email": clean_email,
+                "department": clean_dept,
+            }
+        else:
+            cursor.execute(
+                """
+                INSERT INTO student_profiles (user_id, full_name, email, department)
+                VALUES (?, ?, ?, ?);
+                """,
+                (clean_id, clean_name, clean_email, clean_dept),
+            )
+            return {
+                "user_id": clean_id,
+                "full_name": clean_name,
+                "email": clean_email,
+                "department": clean_dept,
+            }
+
+
+
+def cancel_reservation(booking_id: int, service_type: str = "Laboratory", db_path: str | Path | None = None) -> bool:
+    """Cancel a booking by setting status = 'cancelled'."""
+    table = "bookings" if "lab" in (service_type or "").lower() else "room_bookings"
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE {table} SET status = 'cancelled' WHERE booking_id = ?;", (booking_id,))
+        return cursor.rowcount > 0
+
+
+def get_facility_details_by_id(facility_type: str, facility_id: int, db_path: str | Path | None = None) -> dict[str, Any] | None:
+    """Retrieve detailed metadata for a lab or discussion room."""
+    if "lab" in facility_type.lower():
+        lab = get_laboratory_by_id(facility_id, db_path=db_path)
+        if lab:
+            lab["service_type"] = "Laboratory"
+            equip_map = {
+                1: ["40x Workstations", "Gigabit Ethernet", "Visual Studio Code", "Python 3.12", "Dual Projectors"],
+                2: ["30x High-Perf GPUs", "NVIDIA RTX 4090", "PyTorch / TensorFlow", "JupyterHub", "Interactive Display"],
+                3: ["35x Cisco Routers & Switches", "Packet Tracer", "Wireshark Workstations", "Fiber Patch Panels"],
+            }
+            lab["equipment"] = equip_map.get(facility_id, ["Standard Campus Computing Workstations", "LAN / Wi-Fi"])
+            return lab
+    else:
+        room = get_discussion_room_by_id(facility_id, db_path=db_path)
+        if room:
+            room["service_type"] = "Library Room"
+            amen_map = {
+                1: ["Acoustic Wall Panels", "Whiteboard & Markers", "4x Ergonomic Chairs", "Power Outlets", "Campus Wi-Fi"],
+                2: ["Acoustic Wall Panels", "55-inch Ultra-HD Screen", "Whiteboard", "6x Ergonomic Chairs", "HDMI / Type-C"],
+                3: ["Conference Table", "Conference Web Camera", "8x Ergonomic Chairs", "Dual Whiteboards", "Presentation Screen"],
+            }
+            room["equipment"] = amen_map.get(facility_id, ["Whiteboard", "High-speed Wi-Fi", "Power Outlets"])
+            return room
+    return None
+
+
+def recommend_matching_facilities(
+    facility_type: str,
+    booking_date: str,
+    start_time: str,
+    end_time: str,
+    min_capacity: int = 1,
+    purpose: str = "",
+    db_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Search and rank available facilities matching capacity and time requirements."""
+    is_lab = "lab" in facility_type.lower() or "comp" in facility_type.lower() or "ai" in facility_type.lower()
+    
+    results = []
+    if is_lab:
+        labs = get_all_laboratories(db_path=db_path)
+        for lab in labs:
+            cap = lab["capacity"]
+            has_conflict = check_booking_overlap(
+                lab_id=lab["lab_id"],
+                booking_date=booking_date,
+                start_time=start_time,
+                end_time=end_time,
+                db_path=db_path,
+            )
+            is_avail = not has_conflict
+            is_cap_ok = cap >= min_capacity
+            cap_diff = cap - min_capacity if is_cap_ok else min_capacity - cap
+            
+            if is_avail and is_cap_ok:
+                badge = "Best Match" if cap_diff <= 10 else "Alternative"
+                reason = f"Comfortably accommodates {min_capacity} students (Capacity: {cap}) and slot {start_time}-{end_time} on {booking_date} is 100% free."
+            elif is_avail and not is_cap_ok:
+                badge = "Insufficient Capacity"
+                reason = f"Slot is available, but capacity is {cap} (less than requested {min_capacity})."
+            else:
+                badge = "Conflict"
+                reason = f"Time slot {start_time}-{end_time} on {booking_date} is already booked."
+                
+            results.append({
+                "facility_type": "lab",
+                "service_type": "Laboratory",
+                "facility_id": lab["lab_id"],
+                "lab_id": lab["lab_id"],
+                "room_id": None,
+                "facility_name": lab["lab_name"],
+                "capacity": cap,
+                "location": lab.get("location", "Campus Building"),
+                "booking_date": booking_date,
+                "start_time": start_time,
+                "end_time": end_time,
+                "is_available": is_avail,
+                "is_capacity_sufficient": is_cap_ok,
+                "match_badge": badge,
+                "match_reason": reason,
+                "cap_diff": cap_diff if (is_avail and is_cap_ok) else 9999,
+            })
+    else:
+        rooms = get_all_discussion_rooms(db_path=db_path)
+        for room in rooms:
+            cap = room["capacity"]
+            has_conflict = check_room_booking_overlap(
+                room_id=room["room_id"],
+                booking_date=booking_date,
+                start_time=start_time,
+                end_time=end_time,
+                db_path=db_path,
+            )
+            is_avail = not has_conflict
+            is_cap_ok = cap >= min_capacity
+            cap_diff = cap - min_capacity if is_cap_ok else min_capacity - cap
+            
+            if is_avail and is_cap_ok:
+                badge = "Best Match" if cap_diff <= 2 else "Alternative"
+                reason = f"Accommodates {min_capacity} people (Capacity: {cap} seats) and slot {start_time}-{end_time} on {booking_date} is free."
+            elif is_avail and not is_cap_ok:
+                badge = "Insufficient Capacity"
+                reason = f"Slot is available, but capacity is {cap} seats (less than requested {min_capacity})."
+            else:
+                badge = "Conflict"
+                reason = f"Time slot {start_time}-{end_time} on {booking_date} is already reserved."
+                
+            results.append({
+                "facility_type": "room",
+                "service_type": "Library Room",
+                "facility_id": room["room_id"],
+                "lab_id": None,
+                "room_id": room["room_id"],
+                "facility_name": room["room_name"],
+                "capacity": cap,
+                "location": room.get("location", "Library Building"),
+                "booking_date": booking_date,
+                "start_time": start_time,
+                "end_time": end_time,
+                "is_available": is_avail,
+                "is_capacity_sufficient": is_cap_ok,
+                "match_badge": badge,
+                "match_reason": reason,
+                "cap_diff": cap_diff if (is_avail and is_cap_ok) else 9999,
+            })
+            
+    # Sort results: available and sufficient capacity first, ordered by closest capacity fit
+    results.sort(key=lambda x: (not (x["is_available"] and x["is_capacity_sufficient"]), x["cap_diff"]))
+    return results
+
+
+

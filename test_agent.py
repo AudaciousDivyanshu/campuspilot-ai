@@ -90,7 +90,7 @@ def run_agent_tests():
         print("\nAgent Response:", flush=True)
         print(result3["response"], flush=True)
         print(f"\nTools Used: {[s['tool'] for s in result3['steps']]}", flush=True)
-        assert any(s["tool"] == "create_lab_booking" for s in result3["steps"]), "Agent should call create_lab_booking after confirmation"
+        assert any(s["tool"] in ("create_lab_booking", "create_booking") for s in result3["steps"]), "Agent should call create_lab_booking or create_booking after confirmation"
         print(" PASS: Booking successfully created in SQLite with verified Booking ID!", flush=True)
 
         print("\n" + "=" * 65, flush=True)

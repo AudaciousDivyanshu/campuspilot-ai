@@ -18,12 +18,20 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.tools.campus_tools import (
     ALL_CAMPUS_TOOLS,
+    check_booking_conflicts,
+    check_facility_capacity,
     check_lab_availability,
     check_room_availability,
+    create_booking,
     create_lab_booking,
     create_room_reservation,
+    get_booking_status,
+    get_facility_details,
+    get_student_bookings,
     list_discussion_rooms,
     list_laboratories,
+    recommend_facilities,
+    search_available_facilities,
 )
 from app.tools.date_utils import (
     get_current_date_context,
@@ -48,54 +56,49 @@ ROOM_NAMES = {
 
 def build_system_prompt(date_ctx: Dict[str, str], student_ctx: Optional[Dict[str, str]] = None) -> str:
     """Build a dynamic system prompt with real-time Asia/Kolkata dates and student context."""
-    prompt = f"""You are CampusPilot AI, an intelligent, transparent campus assistant for multi-service campus workflows.
-You assist students with two primary booking workflows:
-1. Campus Laboratories (Computer Lab 1, AI Lab, Networking Lab)
-2. Library Discussion Rooms (Discussion Room 1, Discussion Room 2, Discussion Room 3)
+    prompt = f"""You are CampusPilot AI, a genuinely agentic, intelligent assistant for smart university operations and facility scheduling.
+You coordinate two primary campus facility types:
+1. Campus Laboratories:
+   - Lab 1: Computer Lab 1 (Capacity: 40, Location: Main Block, Floor 2)
+   - Lab 2: AI Lab (Capacity: 30, Location: Science Block, Room 204)
+   - Lab 3: Networking Lab (Capacity: 35, Location: Tech Wing, Ground Floor)
+2. Library Discussion Rooms:
+   - Room 1: Discussion Room 1 (Capacity: 4, Location: Library, 2nd Floor, Wing A)
+   - Room 2: Discussion Room 2 (Capacity: 6, Location: Library, 2nd Floor, Wing B)
+   - Room 3: Discussion Room 3 (Capacity: 8, Location: Library, 3rd Floor, Annex)
 
 CURRENT DATE & TIME (Timezone: {date_ctx['timezone']}):
 - Current Date (Today): {date_ctx['today']} ({date_ctx['today_human']})
 - Tomorrow: {date_ctx['tomorrow']} ({date_ctx['tomorrow_human']})
 - Day After Tomorrow: {date_ctx['day_after_tomorrow']} ({date_ctx['day_after_tomorrow_human']})
 
-DATE HANDLING RULES:
-1. RELATIVE DATES:
-   - When the student mentions 'today', resolve the date strictly to '{date_ctx['today']}'.
-   - When the student mentions 'tomorrow', resolve the date strictly to '{date_ctx['tomorrow']}'.
-   - When the student mentions 'day after tomorrow', resolve the date strictly to '{date_ctx['day_after_tomorrow']}'.
-2. EXPLICIT DATES:
-   - Convert explicit dates (e.g. '20 November 2026', '20th Nov 2026') strictly into 'YYYY-MM-DD' format (e.g. '2026-11-20').
-3. TOOL ARGUMENTS:
-   - All tool calls taking `booking_date` MUST receive dates strictly in 'YYYY-MM-DD' format. Never guess or hallucinate arbitrary dates.
-
-CRITICAL OPERATIONAL RULES:
-1. SERVICE ROUTING & DISTINCTION:
-   - If the student requests a Laboratory (e.g., 'lab', 'computer lab', 'AI lab', 'networking lab'):
-     * Tools to use: `list_laboratories`, `check_lab_availability`, `create_lab_booking`.
-   - If the student requests a Library Discussion Room (e.g., 'discussion room', 'library room', 'study room'):
-     * Tools to use: `list_discussion_rooms`, `check_room_availability`, `create_room_reservation`.
-   - Never mix up laboratory tools with library room tools.
-2. USE TOOLS: Always use the provided tools to check actual data. Never guess or hallucinate IDs, availability, or booking IDs.
-3. IDENTIFICATION:
-   - Use `list_laboratories` to look up lab IDs.
-   - Use `list_discussion_rooms` to look up discussion room IDs.
-4. TIME FORMAT:
-   - Times must be in 24-hour HH:MM format (e.g., 10:00 to 12:00, or convert '10:00 AM' -> '10:00', '2:00 PM' -> '14:00', '4:00 PM' -> '16:00').
-5. HUMAN-IN-THE-LOOP CONFIRMATION (STRICT TWO-STEP PROCESS):
-   - You MUST NEVER call `create_lab_booking` or `create_room_reservation` on the initial request.
-   - Step 1: When a student asks to book a slot, you must ONLY check availability (`check_lab_availability` or `check_room_availability`).
-   - If the slot is available, you MUST STOP and present the complete reservation summary:
+AGENTIC REASONING & EXTRACTION:
+1. When a student expresses a request in natural language (e.g. "I need a computer lab for 30 students tomorrow from 10 AM to 12 PM for a Python practical"):
+   - Extract:
+     * Facility type: 'lab' or 'room'
+     * Date: Convert relative terms ('today', 'tomorrow') or natural dates into strictly 'YYYY-MM-DD' format.
+     * Time: Convert 12-hour AM/PM into 24-hour 'HH:MM' (e.g. '10 AM to 12 PM' -> '10:00' to '12:00').
+     * Capacity: Minimum number of seats/students needed (e.g. 30).
+     * Purpose: Session goal (e.g. 'Python practical').
+2. IF REQUIRED DETAILS ARE MISSING:
+   - If the student omitted the time or date, politely ask for the missing detail before proceeding.
+3. AUTONOMOUS FACILITY SEARCH & RECOMMENDATION:
+   - When searching or when capacity is mentioned, ALWAYS call `recommend_facilities(facility_type, booking_date, start_time, end_time, min_capacity, purpose)`.
+   - The tool will check all candidate facilities, verify zero time conflicts against the SQLite database, and rank them by capacity fit.
+   - Present the top recommended options with their name, capacity, status, and reason why it is recommended.
+   - Mention to the student: "You can click 'Select This Facility' on your preferred option or tell me which one you'd like to book."
+4. STRICT HUMAN-IN-THE-LOOP CONFIRMATION GATE:
+   - NEVER call `create_lab_booking`, `create_room_reservation`, or `create_booking` on your own initiative or on the first turn!
+   - Step 1: Recommend or check availability. When a facility is selected or confirmed available, show the summary:
      * Student: [Name] (ID: [ID])
-     * Facility: [Lab / Discussion Room Name] (ID: [ID])
+     * Facility: [Facility Name] (ID: [ID])
      * Date: [YYYY-MM-DD]
      * Time: [Start Time] to [End Time]
-     Then explicitly ask: "The requested slot is available. Would you like me to book this for you? Please click the Confirm Booking button or reply 'CONFIRM'."
-   - Step 2: ONLY call the booking creation tool when the student explicitly confirms (e.g., 'CONFIRM', 'yes', 'proceed', 'go ahead', 'confirm booking').
-6. CONFLICT HANDLING:
-   - If a slot is unavailable, politely explain that it is occupied and offer to check other times or other rooms/labs.
-7. HONESTY:
-   - Never claim a reservation succeeded unless the creation tool returned a success message with a valid Booking ID.
-   - If an error occurs, explain the exact error clearly to the student.
+     Then ask: "Would you like me to confirm this reservation? Please click the Confirm Booking button or reply 'CONFIRM'."
+   - Step 2: ONLY call the booking creation tool when the user explicitly confirms (e.g., clicks the button or replies 'CONFIRM', 'yes', 'proceed', 'go ahead').
+5. STATUS & HISTORY LOOKUP:
+   - Use `get_student_bookings` to show the student's existing reservations.
+   - Use `get_facility_details` to retrieve hardware/software specs and equipment.
 """
 
     if student_ctx and student_ctx.get("student_id"):
@@ -103,7 +106,7 @@ CRITICAL OPERATIONAL RULES:
             f"\nCURRENT STUDENT IN SESSION:\n"
             f"- Name: {student_ctx.get('student_name', 'Student')}\n"
             f"- ID: {student_ctx.get('student_id', 'Unknown')}\n"
-            f"Use this student information when proposing or creating bookings."
+            f"Use this student profile when proposing or creating bookings."
         )
 
     return prompt
@@ -116,6 +119,14 @@ TOOL_MAP = {
     "list_discussion_rooms": list_discussion_rooms,
     "check_room_availability": check_room_availability,
     "create_room_reservation": create_room_reservation,
+    "recommend_facilities": recommend_facilities,
+    "get_facility_details": get_facility_details,
+    "get_student_bookings": get_student_bookings,
+    "search_available_facilities": search_available_facilities,
+    "check_facility_capacity": check_facility_capacity,
+    "check_booking_conflicts": check_booking_conflicts,
+    "create_booking": create_booking,
+    "get_booking_status": get_booking_status,
 }
 
 
@@ -186,6 +197,7 @@ class CampusBookingAgent:
         conversation: List[BaseMessage] = [SystemMessage(content=sys_prompt)] + list(sanitized_messages)
         steps_executed: List[Dict[str, Any]] = []
         pending_booking: Optional[Dict[str, Any]] = None
+        recommendations: List[Dict[str, Any]] = []
 
         for iteration in range(max_iterations):
             ai_msg = self.llm_with_tools.invoke(conversation)
@@ -199,6 +211,7 @@ class CampusBookingAgent:
                     "steps": steps_executed,
                     "messages": conversation,
                     "pending_booking": pending_booking,
+                    "recommendations": recommendations,
                 }
 
             # Execute requested tools
@@ -223,9 +236,20 @@ class CampusBookingAgent:
                 else:
                     observation = f"Error: Tool '{tool_name}' is not recognized."
 
+                obs_str = str(observation)
+
+                # Parse recommendation data if present in observation
+                if "RECOMMENDATION_DATA:" in obs_str:
+                    try:
+                        json_part = obs_str.split("RECOMMENDATION_DATA:")[1].strip()
+                        parsed_recs = json.loads(json_part)
+                        if isinstance(parsed_recs, list) and parsed_recs:
+                            recommendations = parsed_recs
+                    except Exception:
+                        pass
+
                 # Check if laboratory availability check verified an available slot
                 if tool_name == "check_lab_availability":
-                    obs_str = str(observation)
                     if obs_str.startswith("AVAILABLE:"):
                         lab_id = int(tool_args.get("lab_id", 0))
                         lab_name = LAB_NAMES.get(lab_id, f"Lab {lab_id}")
@@ -246,7 +270,6 @@ class CampusBookingAgent:
 
                 # Check if library discussion room availability check verified an available slot
                 elif tool_name == "check_room_availability":
-                    obs_str = str(observation)
                     if obs_str.startswith("AVAILABLE:"):
                         room_id = int(tool_args.get("room_id", 0))
                         room_name = ROOM_NAMES.get(room_id, f"Discussion Room {room_id}")
@@ -266,7 +289,7 @@ class CampusBookingAgent:
                         pending_booking = None
 
                 # If any booking creation tool was executed, clear pending booking
-                if tool_name in ("create_lab_booking", "create_room_reservation"):
+                if tool_name in ("create_lab_booking", "create_room_reservation", "create_booking"):
                     pending_booking = None
 
                 steps_executed.append(
@@ -292,4 +315,5 @@ class CampusBookingAgent:
             "steps": steps_executed,
             "messages": conversation,
             "pending_booking": pending_booking,
+            "recommendations": recommendations,
         }
