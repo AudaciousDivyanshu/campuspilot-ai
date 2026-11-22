@@ -34,7 +34,7 @@ def get_all_laboratories(db_path: str | Path | None = None) -> list[dict[str, An
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT lab_id, lab_name, capacity, location
+            SELECT lab_id, lab_name, capacity, location, is_enabled
             FROM labs
             ORDER BY lab_id ASC;
             """
@@ -49,7 +49,7 @@ def get_laboratory_by_id(lab_id: int, db_path: str | Path | None = None) -> dict
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT lab_id, lab_name, capacity, location
+            SELECT lab_id, lab_name, capacity, location, is_enabled
             FROM labs
             WHERE lab_id = ?;
             """,
@@ -139,7 +139,7 @@ def check_booking_overlap(
                 FROM bookings
                 WHERE lab_id = ?
                   AND booking_date = ?
-                  AND status = 'confirmed'
+                  AND status IN ('confirmed', 'approved')
                   AND booking_id != ?
                   AND ? < end_time
                   AND ? > start_time
@@ -154,7 +154,7 @@ def check_booking_overlap(
                 FROM bookings
                 WHERE lab_id = ?
                   AND booking_date = ?
-                  AND status = 'confirmed'
+                  AND status IN ('confirmed', 'approved')
                   AND ? < end_time
                   AND ? > start_time
                 LIMIT 1;
@@ -172,6 +172,7 @@ def create_booking(
     start_time: str,
     end_time: str,
     status: str = "confirmed",
+    purpose: str = "",
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Create a new lab booking after verifying laboratory existence and slot availability.
@@ -183,7 +184,8 @@ def create_booking(
         booking_date: Date of booking ('YYYY-MM-DD').
         start_time: Start time ('HH:MM').
         end_time: End time ('HH:MM').
-        status: Initial status, default 'confirmed'.
+        status: Initial status, default 'confirmed' (or 'pending').
+        purpose: Academic purpose of the session.
         db_path: Optional path to the SQLite database.
 
     Returns:
@@ -203,14 +205,14 @@ def create_booking(
         if not lab:
             raise ValueError(f"Laboratory with lab_id={lab_id} does not exist.")
 
-        # Check for overlapping confirmed bookings
+        # Check for overlapping confirmed or approved bookings
         cursor.execute(
             """
             SELECT booking_id, student_name, start_time, end_time
             FROM bookings
             WHERE lab_id = ?
               AND booking_date = ?
-              AND status = 'confirmed'
+              AND status IN ('confirmed', 'approved')
               AND ? < end_time
               AND ? > start_time
             LIMIT 1;
@@ -227,10 +229,10 @@ def create_booking(
         # Insert new booking
         cursor.execute(
             """
-            INSERT INTO bookings (student_id, student_name, lab_id, booking_date, start_time, end_time, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO bookings (student_id, student_name, lab_id, booking_date, start_time, end_time, status, purpose)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
             """,
-            (student_id.strip(), student_name.strip(), lab_id, booking_date.strip(), start_time.strip(), end_time.strip(), status.strip()),
+            (student_id.strip(), student_name.strip(), lab_id, booking_date.strip(), start_time.strip(), end_time.strip(), status.strip(), purpose.strip()),
         )
         new_booking_id = cursor.lastrowid
 
@@ -244,6 +246,8 @@ def create_booking(
             "start_time": start_time.strip(),
             "end_time": end_time.strip(),
             "status": status.strip(),
+            "purpose": purpose.strip(),
+            "rejection_reason": "",
         }
 
 
@@ -261,7 +265,7 @@ def get_all_discussion_rooms(db_path: str | Path | None = None) -> list[dict[str
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT room_id, room_name, capacity, location
+            SELECT room_id, room_name, capacity, location, is_enabled
             FROM discussion_rooms
             ORDER BY room_id ASC;
             """
@@ -276,7 +280,7 @@ def get_discussion_room_by_id(room_id: int, db_path: str | Path | None = None) -
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT room_id, room_name, capacity, location
+            SELECT room_id, room_name, capacity, location, is_enabled
             FROM discussion_rooms
             WHERE room_id = ?;
             """,
@@ -366,7 +370,7 @@ def check_room_booking_overlap(
                 FROM room_bookings
                 WHERE room_id = ?
                   AND booking_date = ?
-                  AND status = 'confirmed'
+                  AND status IN ('confirmed', 'approved')
                   AND booking_id != ?
                   AND ? < end_time
                   AND ? > start_time
@@ -381,7 +385,7 @@ def check_room_booking_overlap(
                 FROM room_bookings
                 WHERE room_id = ?
                   AND booking_date = ?
-                  AND status = 'confirmed'
+                  AND status IN ('confirmed', 'approved')
                   AND ? < end_time
                   AND ? > start_time
                 LIMIT 1;
@@ -399,6 +403,7 @@ def create_room_booking(
     start_time: str,
     end_time: str,
     status: str = "confirmed",
+    purpose: str = "",
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Create a new library discussion room reservation after verifying room existence and slot availability.
@@ -410,7 +415,8 @@ def create_room_booking(
         booking_date: Date of booking ('YYYY-MM-DD').
         start_time: Start time ('HH:MM').
         end_time: End time ('HH:MM').
-        status: Initial status, default 'confirmed'.
+        status: Initial status, default 'confirmed' (or 'pending').
+        purpose: Academic or collaborative study purpose.
         db_path: Optional path to SQLite database.
 
     Returns:
@@ -430,14 +436,14 @@ def create_room_booking(
         if not room:
             raise ValueError(f"Discussion room with room_id={room_id} does not exist.")
 
-        # Check for overlapping confirmed reservations
+        # Check for overlapping confirmed or approved reservations
         cursor.execute(
             """
             SELECT booking_id, student_name, start_time, end_time
             FROM room_bookings
             WHERE room_id = ?
               AND booking_date = ?
-              AND status = 'confirmed'
+              AND status IN ('confirmed', 'approved')
               AND ? < end_time
               AND ? > start_time
             LIMIT 1;
@@ -454,10 +460,10 @@ def create_room_booking(
         # Insert new room booking
         cursor.execute(
             """
-            INSERT INTO room_bookings (student_id, student_name, room_id, booking_date, start_time, end_time, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO room_bookings (student_id, student_name, room_id, booking_date, start_time, end_time, status, purpose)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
             """,
-            (student_id.strip(), student_name.strip(), room_id, booking_date.strip(), start_time.strip(), end_time.strip(), status.strip()),
+            (student_id.strip(), student_name.strip(), room_id, booking_date.strip(), start_time.strip(), end_time.strip(), status.strip(), purpose.strip()),
         )
         new_booking_id = cursor.lastrowid
 
@@ -471,6 +477,8 @@ def create_room_booking(
             "start_time": start_time.strip(),
             "end_time": end_time.strip(),
             "status": status.strip(),
+            "purpose": purpose.strip(),
+            "rejection_reason": "",
         }
 
 
@@ -488,7 +496,8 @@ def get_all_student_reservations(student_id: str, student_name: str | None = Non
                 """
                 SELECT b.booking_id, b.student_id, b.student_name, b.lab_id as facility_id,
                        l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
-                       b.booking_date, b.start_time, b.end_time, b.status
+                       b.booking_date, b.start_time, b.end_time, b.status,
+                       b.purpose, b.rejection_reason, b.created_at
                 FROM bookings b
                 JOIN labs l ON b.lab_id = l.lab_id
                 WHERE b.student_id = ?
@@ -501,7 +510,8 @@ def get_all_student_reservations(student_id: str, student_name: str | None = Non
                 """
                 SELECT b.booking_id, b.student_id, b.student_name, b.lab_id as facility_id,
                        l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
-                       b.booking_date, b.start_time, b.end_time, b.status
+                       b.booking_date, b.start_time, b.end_time, b.status,
+                       b.purpose, b.rejection_reason, b.created_at
                 FROM bookings b
                 JOIN labs l ON b.lab_id = l.lab_id
                 WHERE b.student_name = ?
@@ -517,7 +527,8 @@ def get_all_student_reservations(student_id: str, student_name: str | None = Non
                 """
                 SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
                        r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
-                       rb.booking_date, rb.start_time, rb.end_time, rb.status
+                       rb.booking_date, rb.start_time, rb.end_time, rb.status,
+                       rb.purpose, rb.rejection_reason, rb.created_at
                 FROM room_bookings rb
                 JOIN discussion_rooms r ON rb.room_id = r.room_id
                 WHERE rb.student_id = ?
@@ -530,7 +541,8 @@ def get_all_student_reservations(student_id: str, student_name: str | None = Non
                 """
                 SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
                        r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
-                       rb.booking_date, rb.start_time, rb.end_time, rb.status
+                       rb.booking_date, rb.start_time, rb.end_time, rb.status,
+                       rb.purpose, rb.rejection_reason, rb.created_at
                 FROM room_bookings rb
                 JOIN discussion_rooms r ON rb.room_id = r.room_id
                 WHERE rb.student_name = ?
@@ -786,6 +798,286 @@ def recommend_matching_facilities(
     # Sort results: available and sufficient capacity first, ordered by closest capacity fit
     results.sort(key=lambda x: (not (x["is_available"] and x["is_capacity_sufficient"]), x["cap_diff"]))
     return results
+
+
+# ==========================================
+# ADMINISTRATIVE WORKFLOW OPERATIONS
+# ==========================================
+
+def get_all_booking_requests(
+    status_filter: str | None = None,
+    service_filter: str | None = None,
+    db_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Retrieve all student booking requests across labs and discussion rooms for administration."""
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Labs
+        cursor.execute(
+            """
+            SELECT b.booking_id, b.student_id, b.student_name, b.lab_id as facility_id,
+                   l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
+                   b.booking_date, b.start_time, b.end_time, b.status,
+                   b.purpose, b.rejection_reason, b.created_at
+            FROM bookings b
+            JOIN labs l ON b.lab_id = l.lab_id
+            ORDER BY b.booking_date DESC, b.start_time DESC;
+            """
+        )
+        lab_requests = [dict(row) for row in cursor.fetchall()]
+
+        # Rooms
+        cursor.execute(
+            """
+            SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
+                   r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
+                   rb.booking_date, rb.start_time, rb.end_time, rb.status,
+                   rb.purpose, rb.rejection_reason, rb.created_at
+            FROM room_bookings rb
+            JOIN discussion_rooms r ON rb.room_id = r.room_id
+            ORDER BY rb.booking_date DESC, rb.start_time DESC;
+            """
+        )
+        room_requests = [dict(row) for row in cursor.fetchall()]
+
+        all_requests = lab_requests + room_requests
+
+        if status_filter:
+            sf = status_filter.strip().lower()
+            all_requests = [r for r in all_requests if r.get("status", "").strip().lower() == sf]
+
+        if service_filter:
+            srv = service_filter.strip().lower()
+            all_requests = [r for r in all_requests if srv in r.get("service_type", "").lower()]
+
+        all_requests.sort(key=lambda x: (x.get("booking_date", ""), x.get("start_time", "")), reverse=True)
+        return all_requests
+
+
+def approve_booking(
+    booking_id: int,
+    service_type: str = "Laboratory",
+    db_path: str | Path | None = None,
+) -> tuple[bool, str]:
+    """Approve a pending booking request after verifying no conflicting approved booking exists."""
+    is_lab = "lab" in (service_type or "").lower()
+    table = "bookings" if is_lab else "room_bookings"
+    id_col = "lab_id" if is_lab else "room_id"
+
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT booking_id, {id_col}, booking_date, start_time, end_time, student_name, status FROM {table} WHERE booking_id = ?;",
+            (booking_id,),
+        )
+        req = cursor.fetchone()
+        if not req:
+            return False, f"Request #{booking_id} does not exist in {table}."
+
+        target_facility_id = req[id_col]
+        target_date = req["booking_date"]
+        start_time = req["start_time"]
+        end_time = req["end_time"]
+
+        # Conflict verification against other confirmed or approved bookings
+        if is_lab:
+            has_conflict = check_booking_overlap(
+                lab_id=target_facility_id,
+                booking_date=target_date,
+                start_time=start_time,
+                end_time=end_time,
+                exclude_booking_id=booking_id,
+                db_path=db_path,
+            )
+        else:
+            has_conflict = check_room_booking_overlap(
+                room_id=target_facility_id,
+                booking_date=target_date,
+                start_time=start_time,
+                end_time=end_time,
+                exclude_booking_id=booking_id,
+                db_path=db_path,
+            )
+
+        if has_conflict:
+            return False, f"Cannot approve: A confirmed/approved booking already occupies {target_date} ({start_time} - {end_time})."
+
+        cursor.execute(
+            f"UPDATE {table} SET status = 'approved', rejection_reason = '' WHERE booking_id = ?;",
+            (booking_id,),
+        )
+        return True, f"Request #{booking_id} successfully approved and confirmed in schedule."
+
+
+def reject_booking(
+    booking_id: int,
+    service_type: str = "Laboratory",
+    rejection_reason: str = "Declined by department administrator",
+    db_path: str | Path | None = None,
+) -> bool:
+    """Reject a booking request and record the rejection reason for the student."""
+    table = "bookings" if "lab" in (service_type or "").lower() else "room_bookings"
+    reason = rejection_reason.strip() or "Declined by department administrator"
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE {table} SET status = 'rejected', rejection_reason = ? WHERE booking_id = ?;",
+            (reason, booking_id),
+        )
+        return cursor.rowcount > 0
+
+
+def toggle_facility_status(
+    facility_type: str,
+    facility_id: int,
+    is_enabled: int,
+    db_path: str | Path | None = None,
+) -> bool:
+    """Enable or disable facility booking by administrators."""
+    table = "labs" if "lab" in (facility_type or "").lower() else "discussion_rooms"
+    col = "lab_id" if "lab" in (facility_type or "").lower() else "room_id"
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE {table} SET is_enabled = ? WHERE {col} = ?;",
+            (1 if is_enabled else 0, facility_id),
+        )
+        return cursor.rowcount > 0
+
+
+def get_admin_dashboard_metrics(db_path: str | Path | None = None) -> dict[str, Any]:
+    """Calculate administrative metrics based on actual SQLite database records."""
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Lab stats
+        cursor.execute("SELECT status, count(*) as count FROM bookings GROUP BY status;")
+        lab_counts = {row["status"]: row["count"] for row in cursor.fetchall()}
+
+        # Room stats
+        cursor.execute("SELECT status, count(*) as count FROM room_bookings GROUP BY status;")
+        room_counts = {row["status"]: row["count"] for row in cursor.fetchall()}
+
+        # Facilities
+        cursor.execute("SELECT count(*) as total, sum(CASE WHEN is_enabled = 1 THEN 1 ELSE 0 END) as active FROM labs;")
+        lab_fac = cursor.fetchone()
+
+        cursor.execute("SELECT count(*) as total, sum(CASE WHEN is_enabled = 1 THEN 1 ELSE 0 END) as active FROM discussion_rooms;")
+        room_fac = cursor.fetchone()
+
+        total_pending = lab_counts.get("pending", 0) + room_counts.get("pending", 0)
+        total_approved = (
+            lab_counts.get("approved", 0) + lab_counts.get("confirmed", 0) +
+            room_counts.get("approved", 0) + room_counts.get("confirmed", 0)
+        )
+        total_rejected = lab_counts.get("rejected", 0) + room_counts.get("rejected", 0)
+        total_cancelled = lab_counts.get("cancelled", 0) + room_counts.get("cancelled", 0)
+        total_all = total_pending + total_approved + total_rejected + total_cancelled
+
+        return {
+            "total_requests": total_all,
+            "pending_requests": total_pending,
+            "approved_requests": total_approved,
+            "rejected_requests": total_rejected,
+            "cancelled_requests": total_cancelled,
+            "total_laboratories": lab_fac["total"] if lab_fac else 0,
+            "active_laboratories": lab_fac["active"] if (lab_fac and lab_fac["active"] is not None) else 0,
+            "total_rooms": room_fac["total"] if room_fac else 0,
+            "active_rooms": room_fac["active"] if (room_fac and room_fac["active"] is not None) else 0,
+        }
+
+
+# ==========================================
+# LEAVE REQUEST OPERATIONS (AUTO-ACCEPTANCE)
+# ==========================================
+
+def create_leave_request(
+    student_id: str,
+    student_name: str,
+    student_email: str,
+    leave_type: str,
+    start_date: str,
+    end_date: str,
+    reason: str,
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Submit a student leave request with automated campus policy evaluation."""
+    clean_id = student_id.strip()
+    clean_name = student_name.strip()
+    clean_email = student_email.strip().lower()
+    clean_type = leave_type.strip()
+    s_date = start_date.strip()
+    e_date = end_date.strip()
+    clean_reason = reason.strip()
+
+    if not clean_id or not clean_name:
+        raise ValueError("Student identity is required for leave submission.")
+    if not s_date or not e_date or not clean_reason:
+        raise ValueError("Start date, end date, and reason are required.")
+    if s_date > e_date:
+        raise ValueError(f"Start date '{s_date}' cannot be later than end date '{e_date}'.")
+
+    # Configured Automatic Acceptance Policy:
+    # Academic and Medical leaves are automatically accepted per campus rules
+    status = "Approved (Auto-Accepted)"
+
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO leave_requests (student_id, student_name, student_email, leave_type, start_date, end_date, reason, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (clean_id, clean_name, clean_email, clean_type, s_date, e_date, clean_reason, status),
+        )
+        leave_id = cursor.lastrowid
+        return {
+            "leave_id": leave_id,
+            "student_id": clean_id,
+            "student_name": clean_name,
+            "student_email": clean_email,
+            "leave_type": clean_type,
+            "start_date": s_date,
+            "end_date": e_date,
+            "reason": clean_reason,
+            "status": status,
+        }
+
+
+def get_student_leave_requests(student_id: str, db_path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Retrieve all leave requests for a given student."""
+    clean_id = (student_id or "").strip()
+    if not clean_id:
+        return []
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT leave_id, student_id, student_name, student_email, leave_type,
+                   start_date, end_date, reason, status, created_at
+            FROM leave_requests
+            WHERE student_id = ?
+            ORDER BY created_at DESC;
+            """,
+            (clean_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_all_leave_requests(db_path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Retrieve all leave requests for administrative oversight."""
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT leave_id, student_id, student_name, student_email, leave_type,
+                   start_date, end_date, reason, status, created_at
+            FROM leave_requests
+            ORDER BY created_at DESC;
+            """
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
 
 

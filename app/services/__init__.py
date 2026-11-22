@@ -23,6 +23,14 @@ from app.services.email_service import (
     send_otp_email,
     send_smtp_email,
 )
+from app.services.demo_auth import (
+    authenticate_user,
+    get_all_demo_users,
+    get_user_by_email,
+    is_password_valid,
+    register_user,
+    validate_password_strength,
+)
 
 __all__ = [
     "request_email_otp",
@@ -37,4 +45,10 @@ __all__ = [
     "send_booking_confirmation_email",
     "is_smtp_configured",
     "is_email_service_configured",
+    "register_user",
+    "authenticate_user",
+    "get_user_by_email",
+    "validate_password_strength",
+    "is_password_valid",
+    "get_all_demo_users",
 ]

@@ -57,7 +57,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             lab_id INTEGER PRIMARY KEY AUTOINCREMENT,
             lab_name TEXT NOT NULL UNIQUE,
             capacity INTEGER NOT NULL,
-            location TEXT
+            location TEXT,
+            is_enabled INTEGER NOT NULL DEFAULT 1
         );
         """
     )
@@ -73,6 +74,9 @@ def create_tables(conn: sqlite3.Connection) -> None:
             start_time TEXT NOT NULL,
             end_time TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'confirmed',
+            purpose TEXT DEFAULT '',
+            rejection_reason TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (lab_id) REFERENCES labs (lab_id) ON DELETE CASCADE
         );
         """
@@ -85,7 +89,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             room_id INTEGER PRIMARY KEY AUTOINCREMENT,
             room_name TEXT NOT NULL UNIQUE,
             capacity INTEGER NOT NULL,
-            location TEXT
+            location TEXT,
+            is_enabled INTEGER NOT NULL DEFAULT 1
         );
         """
     )
@@ -101,6 +106,9 @@ def create_tables(conn: sqlite3.Connection) -> None:
             start_time TEXT NOT NULL,
             end_time TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'confirmed',
+            purpose TEXT DEFAULT '',
+            rejection_reason TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (room_id) REFERENCES discussion_rooms (room_id) ON DELETE CASCADE
         );
         """
@@ -116,6 +124,24 @@ def create_tables(conn: sqlite3.Connection) -> None:
             department TEXT DEFAULT 'Engineering & Technology',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    # Leave requests table (Student submission & Automated Acceptance policy)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS leave_requests (
+            leave_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            student_name TEXT NOT NULL,
+            student_email TEXT NOT NULL,
+            leave_type TEXT NOT NULL,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Approved (Auto-Accepted)',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """
     )
@@ -215,6 +241,43 @@ def seed_sample_discussion_rooms(conn: sqlite3.Connection) -> int:
     return inserted_count
 
 
+def migrate_schema(conn: sqlite3.Connection) -> None:
+    """Safely migrate SQLite database schema non-destructively to support approval workflows."""
+    cursor = conn.cursor()
+
+    # Migrate bookings table
+    cursor.execute("PRAGMA table_info(bookings);")
+    booking_cols = [row["name"] if isinstance(row, dict) else row[1] for row in cursor.fetchall()]
+    if "purpose" not in booking_cols:
+        cursor.execute("ALTER TABLE bookings ADD COLUMN purpose TEXT DEFAULT '';")
+    if "rejection_reason" not in booking_cols:
+        cursor.execute("ALTER TABLE bookings ADD COLUMN rejection_reason TEXT DEFAULT '';")
+    if "created_at" not in booking_cols:
+        cursor.execute("ALTER TABLE bookings ADD COLUMN created_at TEXT DEFAULT '';")
+
+    # Migrate room_bookings table
+    cursor.execute("PRAGMA table_info(room_bookings);")
+    room_cols = [row["name"] if isinstance(row, dict) else row[1] for row in cursor.fetchall()]
+    if "purpose" not in room_cols:
+        cursor.execute("ALTER TABLE room_bookings ADD COLUMN purpose TEXT DEFAULT '';")
+    if "rejection_reason" not in room_cols:
+        cursor.execute("ALTER TABLE room_bookings ADD COLUMN rejection_reason TEXT DEFAULT '';")
+    if "created_at" not in room_cols:
+        cursor.execute("ALTER TABLE room_bookings ADD COLUMN created_at TEXT DEFAULT '';")
+
+    # Migrate labs table
+    cursor.execute("PRAGMA table_info(labs);")
+    lab_cols = [row["name"] if isinstance(row, dict) else row[1] for row in cursor.fetchall()]
+    if "is_enabled" not in lab_cols:
+        cursor.execute("ALTER TABLE labs ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 1;")
+
+    # Migrate discussion_rooms table
+    cursor.execute("PRAGMA table_info(discussion_rooms);")
+    disc_cols = [row["name"] if isinstance(row, dict) else row[1] for row in cursor.fetchall()]
+    if "is_enabled" not in disc_cols:
+        cursor.execute("ALTER TABLE discussion_rooms ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 1;")
+
+
 def init_db(db_path: str | Path | None = None) -> Path:
     """Initialize the SQLite database, ensuring tables and initial seed data exist.
 
@@ -223,6 +286,7 @@ def init_db(db_path: str | Path | None = None) -> Path:
     target_path = get_db_path(db_path)
     with get_db_context(target_path) as conn:
         create_tables(conn)
+        migrate_schema(conn)
         seed_sample_laboratories(conn)
         seed_sample_discussion_rooms(conn)
         seed_sample_student_profiles(conn)

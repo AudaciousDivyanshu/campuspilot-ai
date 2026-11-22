@@ -443,4 +443,129 @@ def get_user_bookings_endpoint(user_id: str):
     return get_all_student_reservations(student_id=user_id)
 
 
+# ==========================================
+# ADMINISTRATIVE WORKFLOW ENDPOINTS
+# ==========================================
+
+@router.get(
+    "/admin/requests",
+    summary="Get all booking requests",
+    description="Lists all student booking requests across labs and rooms for admin oversight.",
+)
+def get_admin_requests_endpoint(
+    status: Optional[str] = Query(None, description="Optional status filter ('pending', 'approved', 'rejected')"),
+    service: Optional[str] = Query(None, description="Optional service filter ('Laboratory', 'Library Room')"),
+):
+    from app.database import get_all_booking_requests
+    return get_all_booking_requests(status_filter=status, service_filter=service)
+
+
+@router.post(
+    "/admin/bookings/{booking_id}/approve",
+    summary="Approve a booking request",
+    description="Approves a pending booking after verifying conflict absence in SQLite.",
+)
+def approve_booking_endpoint(
+    booking_id: int,
+    service_type: str = Query("Laboratory", description="'Laboratory' or 'Library Room'"),
+):
+    from app.database import approve_booking
+    ok, msg = approve_booking(booking_id=booking_id, service_type=service_type)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=msg)
+    return {"status": "approved", "message": msg, "booking_id": booking_id}
+
+
+@router.post(
+    "/admin/bookings/{booking_id}/reject",
+    summary="Reject a booking request",
+    description="Rejects a booking request and records a rejection reason visible to the student.",
+)
+def reject_booking_endpoint(
+    booking_id: int,
+    service_type: str = Query("Laboratory", description="'Laboratory' or 'Library Room'"),
+    payload: Optional[dict] = None,
+):
+    from app.database import reject_booking
+    reason = (payload or {}).get("rejection_reason", "Declined by department administrator")
+    ok = reject_booking(booking_id=booking_id, service_type=service_type, rejection_reason=reason)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking request not found.")
+    return {"status": "rejected", "booking_id": booking_id, "rejection_reason": reason}
+
+
+@router.post(
+    "/admin/facilities/{facility_type}/{facility_id}/toggle",
+    summary="Toggle facility availability",
+    description="Enables or disables facility reservations by administrator command.",
+)
+def toggle_facility_endpoint(
+    facility_type: str,
+    facility_id: int,
+    is_enabled: int = Query(1, description="1 to enable, 0 to disable"),
+):
+    from app.database import toggle_facility_status
+    ok = toggle_facility_status(facility_type=facility_type, facility_id=facility_id, is_enabled=is_enabled)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facility not found.")
+    return {"status": "success", "facility_id": facility_id, "is_enabled": is_enabled}
+
+
+@router.get(
+    "/admin/metrics",
+    summary="Get administrative metrics",
+    description="Retrieves live summary statistics on requests and facility utilization.",
+)
+def get_admin_metrics_endpoint():
+    from app.database import get_admin_dashboard_metrics
+    return get_admin_dashboard_metrics()
+
+
+# ==========================================
+# LEAVE MANAGEMENT ENDPOINTS (AUTO-ACCEPTANCE)
+# ==========================================
+
+@router.post(
+    "/leave/request",
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit student leave request",
+    description="Submits a leave request which is automatically evaluated per configured campus policy.",
+)
+def create_leave_request_endpoint(payload: dict):
+    from app.database import create_leave_request
+    try:
+        res = create_leave_request(
+            student_id=payload.get("student_id", ""),
+            student_name=payload.get("student_name", ""),
+            student_email=payload.get("student_email", ""),
+            leave_type=payload.get("leave_type", "Academic Leave"),
+            start_date=payload.get("start_date", ""),
+            end_date=payload.get("end_date", ""),
+            reason=payload.get("reason", ""),
+        )
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get(
+    "/leave/student/{student_id}",
+    summary="Get student leave requests",
+    description="Returns all submitted leave requests and auto-accepted statuses for a student.",
+)
+def get_student_leaves_endpoint(student_id: str):
+    from app.database import get_student_leave_requests
+    return get_student_leave_requests(student_id)
+
+
+@router.get(
+    "/leave/all",
+    summary="Get all leave requests",
+    description="Returns all leave records across campus for administrator oversight.",
+)
+def get_all_leaves_endpoint():
+    from app.database import get_all_leave_requests
+    return get_all_leave_requests()
+
+
 

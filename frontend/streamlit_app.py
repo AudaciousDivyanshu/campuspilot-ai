@@ -1,22 +1,16 @@
 """CampusPilot AI — Premium Campus Management Platform & Autonomous AI Assistant.
 
 A university productivity platform for multi-step campus facility workflows:
-- Visual Design System: Deep navy & indigo sidebar, clean SaaS workspace, purple/blue gradient accents.
-- Autonomous AI Assistant: Natural-language request parsing (facility, date, time, capacity, purpose),
-  real-time SQLite conflict prevention, ranked recommendations, and Human-in-the-Loop confirmation gate.
-- 8 Dedicated Navigation Views:
-  1. 📊 Dashboard: Unified SaaS overview, 4 stats cards, balanced 2-column workspace, quick actions.
-  2. 💬 AI Assistant: Fullscreen conversational assistant with interactive recommendation cards.
-  3. 🔬 Lab Booking: Direct workstation availability checker and reservation form.
-  4. 📚 Discussion Rooms: Library collaborative study room booking.
-  5. 📋 My Bookings: User-isolated reservation ledger with cancellation support.
-  6. 🏢 Facilities: Detailed campus facility catalog with equipment and capacity specs.
-  7. 📈 Analytics: Real-time utilization charts and booking metrics from SQLite.
-  8. ⚙️ Settings: Student profile management, notification preferences, and system diagnostics.
-- Student Identity:
-  * Dynamic identity resolution with Arnav as default demo identity.
-  * Real-time profile switching (Arnav, Rahul, Student).
-  * Authentication code fully preserved for seamless toggle.
+- Visual Design System: Premium Black & Red Theme (#080808 / #111111 / #171717 / #151515 / #E50914) with Light Mode support.
+- Streamlined Authentication: Email/Password login, student registration with Student ID & Department,
+  removal of student demo shortcuts, and dedicated Faculty/Administrator access.
+- Role-Based Experience:
+  * Student: Personalized Dashboard, AI Assistant, Lab Booking (pending admin approval), Discussion Rooms,
+    My Bookings (tracking pending/approved/rejected with rejection reasons), and Leave Requests (auto-accepted).
+  * Administrator: Administrative Dashboard, Booking Request Approvals/Rejections (with reasons),
+    Facility Enable/Disable Management, and Campus Leave Oversight.
+- Autonomous AI Assistant: Gemini-powered multi-step facility tool execution, conflict prevention,
+  and human-in-the-loop confirmation gates.
 """
 
 from datetime import date, datetime, timedelta
@@ -49,30 +43,39 @@ load_dotenv()
 from langchain_core.messages import AIMessage, HumanMessage
 from app.agent.booking_agent import CampusBookingAgent
 from app.database.operations import (
+    approve_booking,
     cancel_reservation,
     check_booking_overlap,
     check_room_booking_overlap,
     create_booking,
+    create_leave_request,
     create_room_booking,
+    get_admin_dashboard_metrics,
+    get_all_booking_requests,
     get_all_discussion_rooms,
     get_all_laboratories,
+    get_all_leave_requests,
     get_all_student_reservations,
     get_bookings_by_date,
     get_discussion_room_by_id,
     get_facility_details_by_id,
     get_laboratory_by_id,
     get_room_bookings_by_date,
+    get_student_leave_requests,
     get_student_profile,
     get_student_profile_by_email,
     recommend_matching_facilities,
+    reject_booking,
+    toggle_facility_status,
     upsert_student_profile,
 )
-from app.services.supabase_auth import (
-    get_demo_profiles,
-    is_supabase_configured,
-    send_email_otp,
-    sign_out_student,
-    verify_email_otp,
+from app.services.demo_auth import (
+    authenticate_user,
+    get_all_demo_users,
+    get_user_by_email,
+    is_password_valid,
+    register_user,
+    validate_password_strength,
 )
 from app.services.email_service import (
     is_email_service_configured,
@@ -88,408 +91,29 @@ from app.tools.campus_tools import (
 from app.tools.date_utils import get_current_date_context, resolve_relative_dates_in_text
 
 # ==============================================================================
-# CONFIGURATION & AUTHENTICATION TOGGLE
+# CONFIGURATION & STREAMLIT PAGE CONFIG
 # ==============================================================================
-# Set AUTH_PAUSED = True to bypass forced OTP login and open the dashboard directly.
-# Authentication implementation is preserved and can be reactivated anytime.
-AUTH_PAUSED = True
-
 BACKEND_HOST = os.getenv("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = os.getenv("BACKEND_PORT", "8000")
 BACKEND_URL = os.getenv("BACKEND_URL", f"http://{BACKEND_HOST}:{BACKEND_PORT}")
 
-# Streamlit Page Configuration
 st.set_page_config(
-    page_title="CampusPilot AI — Campus Management Platform",
+    page_title="CampusPilot AI — Smart Campus Operations",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Demo Student Profiles (for demonstration and identity switching)
-AVAILABLE_PROFILES = [
-    {
-        "user_id": "student_arnav_001",
-        "full_name": "Arnav",
-        "email": "arnav@campus.edu",
-        "roll_no": "CS2026-001",
-        "department": "Computer Science & Engineering",
-        "avatar": "👨‍🎓",
-    },
-    {
-        "user_id": "student_rahul_002",
-        "full_name": "Rahul",
-        "email": "rahul@campus.edu",
-        "roll_no": "AI2026-002",
-        "department": "AI & Data Science",
-        "avatar": "👨‍🎓",
-    },
-    {
-        "user_id": "student_unknown_003",
-        "full_name": "",
-        "email": "student@campus.edu",
-        "roll_no": "GEN2026-003",
-        "department": "Engineering & Technology",
-        "avatar": "🧑‍🎓",
-    },
-]
+# Application Theme: Dark-Mode-First Black & Red (#080808 & #E50914) with Clean Light Mode Support
+if "theme" not in st.session_state:
+    st.session_state.theme = "dark"
 
-# Initialize Session State
-if "authenticated_user" not in st.session_state or st.session_state.authenticated_user is None:
-    st.session_state.authenticated_user = AVAILABLE_PROFILES[0] if AUTH_PAUSED else None
+if "authenticated_user" not in st.session_state:
+    st.session_state.authenticated_user = None
 
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "📊 Dashboard"
+    st.session_state.current_page = None  # Will default dynamically based on role
 
-if "otp_step" not in st.session_state:
-    st.session_state.otp_step = "request"
-
-if "otp_email_sent_to" not in st.session_state:
-    st.session_state.otp_email_sent_to = ""
-
-if "otp_student_name" not in st.session_state:
-    st.session_state.otp_student_name = ""
-
-# ==============================================================================
-# PREMIUM SAAS STYLING SYSTEM (CSS)
-# ==============================================================================
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
-
-    html, body, [class*="css"] {
-        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-
-    .stApp {
-        background-color: #f8fafc;
-    }
-
-    /* Reduce excess top space in Streamlit main container */
-    .block-container {
-        padding-top: 1.2rem !important;
-        padding-bottom: 2.5rem !important;
-        max-width: 1300px;
-    }
-
-    /* Deep Navy Sidebar Overrides */
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0b1120 0%, #0f172a 100%) !important;
-        border-right: 1px solid #1e293b !important;
-    }
-    section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p,
-    section[data-testid="stSidebar"] span,
-    section[data-testid="stSidebar"] label {
-        color: #e2e8f0 !important;
-    }
-
-    /* Compact Top Brand Navbar */
-    .top-navbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0.75rem 1.25rem;
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-        margin-bottom: 1.1rem;
-    }
-
-    .brand-group {
-        display: flex;
-        align-items: center;
-        gap: 0.6rem;
-    }
-
-    .brand-title {
-        font-size: 1.25rem;
-        font-weight: 800;
-        color: #0f172a;
-        margin: 0;
-        letter-spacing: -0.02em;
-    }
-
-    .brand-tagline {
-        font-size: 0.8rem;
-        color: #64748b;
-        font-weight: 500;
-        border-left: 1px solid #cbd5e1;
-        padding-left: 0.6rem;
-        margin-left: 0.3rem;
-    }
-
-    /* Modern Badges & Indicators */
-    .badge-live {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        background: #ecfdf5;
-        color: #047857;
-        padding: 0.25rem 0.65rem;
-        border-radius: 9999px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        border: 1px solid #a7f3d0;
-    }
-
-    .badge-offline {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        background: #fff1f2;
-        color: #be123c;
-        padding: 0.25rem 0.65rem;
-        border-radius: 9999px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        border: 1px solid #fecdd3;
-    }
-
-    .badge-profile-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.4rem;
-        background: #f1f5f9;
-        color: #1e293b;
-        padding: 0.25rem 0.7rem;
-        border-radius: 9999px;
-        font-size: 0.76rem;
-        font-weight: 600;
-        border: 1px solid #e2e8f0;
-    }
-
-    /* Compact Hero Welcome Banner */
-    .hero-banner {
-        background: linear-gradient(135deg, #4338ca 0%, #6366f1 50%, #7c3aed 100%);
-        border-radius: 16px;
-        padding: 1.35rem 1.6rem;
-        color: #ffffff;
-        box-shadow: 0 8px 20px -4px rgba(99, 102, 241, 0.22);
-        margin-bottom: 1.1rem;
-    }
-
-    .hero-title {
-        font-size: 1.45rem;
-        font-weight: 800;
-        letter-spacing: -0.02em;
-        margin: 0 0 0.3rem 0;
-        color: #ffffff;
-    }
-
-    .hero-subtitle {
-        font-size: 0.88rem;
-        color: #e0e7ff;
-        margin: 0;
-        line-height: 1.5;
-        font-weight: 400;
-    }
-
-    /* Statistics Cards */
-    .stat-card {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        padding: 1rem 1.15rem;
-        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-        margin-bottom: 1rem;
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }
-
-    .stat-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 14px rgba(15, 23, 42, 0.06);
-    }
-
-    .stat-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 0.3rem;
-    }
-
-    .stat-label {
-        font-size: 0.72rem;
-        color: #64748b;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-    }
-
-    .stat-icon {
-        font-size: 1.2rem;
-    }
-
-    .stat-value {
-        font-size: 1.65rem;
-        font-weight: 800;
-        color: #0f172a;
-        margin: 0.1rem 0;
-        letter-spacing: -0.02em;
-    }
-
-    .stat-footer {
-        font-size: 0.74rem;
-        font-weight: 600;
-        display: flex;
-        align-items: center;
-        gap: 0.25rem;
-    }
-
-    /* Content Cards */
-    .content-card {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        padding: 1.25rem;
-        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-        margin-bottom: 1rem;
-    }
-
-    .card-header-title {
-        font-size: 1.05rem;
-        font-weight: 800;
-        color: #0f172a;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 0.3rem;
-        letter-spacing: -0.01em;
-    }
-
-    .card-header-sub {
-        font-size: 0.8rem;
-        color: #64748b;
-        margin-bottom: 0.9rem;
-    }
-
-    /* Interactive Facility Recommendation Card */
-    .rec-card {
-        background: #ffffff;
-        border: 1.5px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 1.1rem;
-        margin-bottom: 0.8rem;
-        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.03);
-        transition: all 0.2s ease;
-    }
-
-    .rec-card:hover {
-        border-color: #6366f1;
-        box-shadow: 0 6px 16px rgba(99, 102, 241, 0.08);
-    }
-
-    .rec-badge-best {
-        background: #f5f3ff;
-        color: #6d28d9;
-        border: 1px solid #ddd6fe;
-        font-size: 0.72rem;
-        font-weight: 800;
-        padding: 0.2rem 0.6rem;
-        border-radius: 9999px;
-    }
-
-    .rec-badge-alt {
-        background: #eff6ff;
-        color: #1d4ed8;
-        border: 1px solid #bfdbfe;
-        font-size: 0.72rem;
-        font-weight: 700;
-        padding: 0.2rem 0.6rem;
-        border-radius: 9999px;
-    }
-
-    /* Human Confirmation Gate Alert Card */
-    .booking-confirm-card {
-        background: #faf5ff;
-        border: 2px solid #8b5cf6;
-        border-radius: 14px;
-        padding: 1.25rem;
-        margin: 1rem 0;
-        box-shadow: 0 6px 18px rgba(139, 92, 246, 0.1);
-    }
-
-    .booking-confirm-header {
-        font-size: 1.05rem;
-        font-weight: 800;
-        color: #5b21b6;
-        margin-bottom: 0.4rem;
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-    }
-
-    .booking-details-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 0.65rem;
-        margin-top: 0.8rem;
-        margin-bottom: 1rem;
-    }
-
-    .booking-item {
-        background: #ffffff;
-        border: 1px solid #e9d5ff;
-        border-radius: 8px;
-        padding: 0.65rem 0.85rem;
-    }
-
-    .booking-item-label {
-        font-size: 0.65rem;
-        color: #7c3aed;
-        text-transform: uppercase;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-    }
-
-    .booking-item-value {
-        font-size: 0.88rem;
-        font-weight: 800;
-        color: #0f172a;
-        margin-top: 0.1rem;
-    }
-
-    /* Upcoming Booking Row Item */
-    .booking-row {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 0.75rem 0.95rem;
-        margin-bottom: 0.55rem;
-        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.02);
-    }
-
-    /* Empty state */
-    .empty-state-box {
-        background: #f8fafc;
-        border: 1.5px dashed #cbd5e1;
-        border-radius: 12px;
-        padding: 1.5rem;
-        text-align: center;
-        color: #64748b;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ==============================================================================
-# HELPERS & SINGLETONS
-# ==============================================================================
-@st.cache_data(ttl=10)
-def check_backend_health() -> bool:
-    try:
-        res = requests.get(f"{BACKEND_URL}/health", timeout=1.5)
-        return res.status_code == 200
-    except Exception:
-        return False
-
-@st.cache_resource
-def get_agent():
-    return CampusBookingAgent()
-
-# Initialize Chat State with Clear Capability Introduction
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
@@ -501,7 +125,7 @@ if "messages" not in st.session_state:
                 "• **Find library discussion rooms** for collaborative study or team projects.\n"
                 "• **Check facility capacity & hardware** (GPUs, workstations, whiteboards).\n"
                 "• **Recommend the best available match** and prevent double-booking conflicts.\n"
-                "• **Securely create your reservation** and provide an instant reference `#ID`.\n\n"
+                "• **Securely submit your reservation request** with instant tracking `#ID`.\n\n"
                 "Try clicking a prompt chip above or type in natural language below!"
             ),
             "steps": [],
@@ -515,141 +139,922 @@ if "langchain_history" not in st.session_state:
 if "pending_booking" not in st.session_state:
     st.session_state.pending_booking = None
 
-# ==============================================================================
-# AUTHENTICATION GATE (Preserved for Future Activation)
-# ==============================================================================
-if not AUTH_PAUSED and st.session_state.authenticated_user is None:
-    st.markdown(
-        """
-        <div class="top-navbar">
-            <div class="brand-group">
-                <span style="font-size: 1.4rem;">🎓</span>
-                <span class="brand-title">CampusPilot AI</span>
-                <span class="brand-tagline">Student Authentication Gateway</span>
-            </div>
-            <div>
-                <span class="badge-live">● Supabase Auth Ready</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    col_hero, col_login = st.columns([1, 1.2], gap="large")
+# ==============================================================================
+# HTML STRING SANITIZER (ELIMINATES 4-SPACE MARKDOWN CODE-BLOCK BUG)
+# ==============================================================================
+def clean_html(html_str: str) -> str:
+    """Strip all leading and trailing whitespace from each line so Markdown never renders code blocks."""
+    return "\n".join(line.strip() for line in html_str.strip().splitlines())
 
-    with col_hero:
+
+# ==============================================================================
+# PREMIUM BLACK & RED THEME STYLING SYSTEM
+# ==============================================================================
+def inject_theme_css(theme: str = "dark"):
+    is_dark = theme == "dark"
+
+    # Strictly specified Black & Red Theme
+    bg_color = "#080808" if is_dark else "#F8FAFC"
+    card_bg = "#111111" if is_dark else "#FFFFFF"
+    secondary_card_bg = "#171717" if is_dark else "#F1F5F9"
+    input_bg = "#151515" if is_dark else "#FFFFFF"
+    text_primary = "#FFFFFF" if is_dark else "#09090B"
+    text_secondary = "#A1A1AA" if is_dark else "#52525B"
+    border_color = "#292929" if is_dark else "#E4E4E7"
+    hover_bg = "#1F1F1F" if is_dark else "#F4F4F5"
+    placeholder_color = "#71717A" if is_dark else "#A1A1AA"
+
+    # Primary crimson accent (#E50914) and hover (#FF303A)
+    accent_crimson = "#E50914"
+    accent_crimson_hover = "#FF303A"
+
+    css = f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    /* Global Typography & Background */
+    html, body, [class*="css"], .stApp {{
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
+        background-color: {bg_color} !important;
+        color: {text_primary} !important;
+    }}
+
+    /* Clean Streamlit Header Area */
+    header[data-testid="stHeader"],
+    [data-testid="stHeader"] {{
+        background: transparent !important;
+        background-color: transparent !important;
+        height: 1.8rem !important;
+    }}
+    .stDeployButton,
+    [data-testid="stToolbarActions"],
+    [data-testid="stDecoration"],
+    #MainMenu,
+    footer {{
+        display: none !important;
+        visibility: hidden !important;
+    }}
+
+    /* Main Container Padding & Width */
+    .block-container {{
+        padding-top: 1rem !important;
+        padding-bottom: 2.5rem !important;
+        max-width: 1240px !important;
+        margin: 0 auto !important;
+    }}
+
+    /* Sleek Obsidian Sidebar */
+    section[data-testid="stSidebar"] {{
+        background: {'#0A0A0A' if is_dark else '#FFFFFF'} !important;
+        border-right: 1px solid {border_color} !important;
+    }}
+    section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p,
+    section[data-testid="stSidebar"] span,
+    section[data-testid="stSidebar"] label {{
+        color: {text_primary} !important;
+    }}
+
+    /* Top Brand Navbar */
+    .top-navbar {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1.25rem;
+        background: {card_bg};
+        border: 1px solid {border_color};
+        border-radius: 14px;
+        box-shadow: {'0 4px 16px rgba(0,0,0,0.5)' if is_dark else '0 1px 3px rgba(15, 23, 42, 0.04)'};
+        margin-bottom: 1.1rem;
+    }}
+
+    .brand-title {{
+        font-size: 1.25rem;
+        font-weight: 800;
+        color: {text_primary};
+        margin: 0;
+        letter-spacing: -0.02em;
+    }}
+
+    .brand-tagline {{
+        font-size: 0.82rem;
+        color: {text_secondary};
+        font-weight: 500;
+        border-left: 1px solid {border_color};
+        padding-left: 0.65rem;
+        margin-left: 0.4rem;
+    }}
+
+    /* Badges & Status Indicators */
+    .badge-live {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: rgba(16, 185, 129, 0.15);
+        color: #10B981;
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        border: 1px solid rgba(16, 185, 129, 0.35);
+    }}
+
+    .badge-offline {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: rgba(229, 9, 20, 0.15);
+        color: #FF303A;
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        border: 1px solid rgba(229, 9, 20, 0.35);
+    }}
+
+    .badge-pending {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: rgba(245, 158, 11, 0.15);
+        color: #F59E0B;
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        border: 1px solid rgba(245, 158, 11, 0.35);
+    }}
+
+    .badge-rejected {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: rgba(229, 9, 20, 0.15);
+        color: #FF303A;
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        border: 1px solid rgba(229, 9, 20, 0.35);
+    }}
+
+    .badge-profile-chip {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        background: {hover_bg};
+        color: {text_primary};
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.76rem;
+        font-weight: 600;
+        border: 1px solid {border_color};
+    }}
+
+    /* Hero Banner */
+    .hero-banner {{
+        background: {'linear-gradient(135deg, #171717 0%, #0F0F0F 100%)' if is_dark else 'linear-gradient(135deg, #F8FAFC 0%, #FFFFFF 100%)'};
+        border: 1px solid {border_color};
+        border-left: 4px solid {accent_crimson};
+        border-radius: 14px;
+        padding: 1.35rem 1.6rem;
+        box-shadow: {'0 6px 20px rgba(0, 0, 0, 0.4)' if is_dark else '0 2px 8px rgba(0, 0, 0, 0.05)'};
+        margin-bottom: 1.15rem;
+    }}
+
+    .hero-title {{
+        font-size: 1.45rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        margin: 0 0 0.35rem 0;
+        color: {text_primary};
+    }}
+
+    .hero-subtitle {{
+        font-size: 0.88rem;
+        color: {text_secondary};
+        margin: 0;
+        line-height: 1.55;
+        font-weight: 400;
+    }}
+
+    /* Stat Cards */
+    .stat-card {{
+        background: {card_bg};
+        border: 1px solid {border_color};
+        border-radius: 14px;
+        padding: 1rem 1.15rem;
+        box-shadow: {'0 2px 8px rgba(0,0,0,0.3)' if is_dark else '0 1px 3px rgba(15, 23, 42, 0.04)'};
+        margin-bottom: 1rem;
+        transition: transform 0.15s ease, border-color 0.15s ease;
+    }}
+
+    .stat-card:hover {{
+        transform: translateY(-2px);
+        border-color: {accent_crimson};
+        box-shadow: {'0 6px 18px rgba(229, 9, 20, 0.18)' if is_dark else '0 6px 14px rgba(229, 9, 20, 0.1)'};
+    }}
+
+    .stat-header {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.3rem;
+    }}
+
+    .stat-label {{
+        font-size: 0.72rem;
+        color: {text_secondary};
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }}
+
+    .stat-icon {{
+        font-size: 1.2rem;
+    }}
+
+    .stat-value {{
+        font-size: 1.65rem;
+        font-weight: 800;
+        color: {text_primary};
+        margin: 0.1rem 0;
+        letter-spacing: -0.02em;
+    }}
+
+    .stat-footer {{
+        font-size: 0.74rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }}
+
+    /* Content Cards */
+    .content-card {{
+        background: {card_bg};
+        border: 1px solid {border_color};
+        border-radius: 14px;
+        padding: 1.35rem;
+        box-shadow: {'0 4px 16px rgba(0,0,0,0.35)' if is_dark else '0 1px 3px rgba(15, 23, 42, 0.04)'};
+        margin-bottom: 1rem;
+    }}
+
+    .card-header-title {{
+        font-size: 1.05rem;
+        font-weight: 800;
+        color: {text_primary};
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.3rem;
+        letter-spacing: -0.01em;
+    }}
+
+    .card-header-sub {{
+        font-size: 0.82rem;
+        color: {text_secondary};
+        margin-bottom: 0.9rem;
+    }}
+
+    /* Recommendation Card */
+    .rec-card {{
+        background: {card_bg};
+        border: 1.5px solid {border_color};
+        border-radius: 12px;
+        padding: 1.1rem;
+        margin-bottom: 0.8rem;
+        transition: all 0.2s ease;
+    }}
+
+    .rec-card:hover {{
+        border-color: {accent_crimson};
+        box-shadow: 0 4px 14px rgba(229, 9, 20, 0.2);
+    }}
+
+    .rec-badge-best {{
+        background: rgba(229, 9, 20, 0.15);
+        color: #FF303A;
+        border: 1px solid rgba(229, 9, 20, 0.35);
+        font-size: 0.72rem;
+        font-weight: 800;
+        padding: 0.2rem 0.6rem;
+        border-radius: 9999px;
+    }}
+
+    .rec-badge-alt {{
+        background: {secondary_card_bg};
+        color: {text_primary};
+        border: 1px solid {border_color};
+        font-size: 0.72rem;
+        font-weight: 700;
+        padding: 0.2rem 0.6rem;
+        border-radius: 9999px;
+    }}
+
+    /* Booking Confirmation Alert Card */
+    .booking-confirm-card {{
+        background: {secondary_card_bg};
+        border: 2px solid {accent_crimson};
+        border-radius: 14px;
+        padding: 1.25rem;
+        margin: 1rem 0;
+        box-shadow: 0 6px 20px rgba(229, 9, 20, 0.25);
+    }}
+
+    .booking-confirm-header {{
+        font-size: 1.05rem;
+        font-weight: 800;
+        color: #FF303A;
+        margin-bottom: 0.4rem;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+    }}
+
+    .booking-details-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 0.65rem;
+        margin-top: 0.8rem;
+        margin-bottom: 1rem;
+    }}
+
+    .booking-item {{
+        background: {input_bg};
+        border: 1px solid {border_color};
+        border-radius: 8px;
+        padding: 0.65rem 0.85rem;
+    }}
+
+    .booking-item-label {{
+        font-size: 0.65rem;
+        color: {accent_crimson};
+        text-transform: uppercase;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+    }}
+
+    .booking-item-value {{
+        font-size: 0.88rem;
+        font-weight: 800;
+        color: {text_primary};
+        margin-top: 0.1rem;
+    }}
+
+    /* Upcoming Booking Row Item */
+    .booking-row {{
+        background: {card_bg};
+        border: 1px solid {border_color};
+        border-radius: 10px;
+        padding: 0.85rem 1rem;
+        margin-bottom: 0.65rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    }}
+
+    /* Rejection reason callout box */
+    .rejection-box {{
+        background: rgba(229, 9, 20, 0.08);
+        border: 1px solid rgba(229, 9, 20, 0.35);
+        border-left: 3px solid {accent_crimson};
+        border-radius: 8px;
+        padding: 0.6rem 0.85rem;
+        margin-top: 0.5rem;
+        font-size: 0.8rem;
+        color: #FF6B6B;
+    }}
+
+    /* Empty state */
+    .empty-state-box {{
+        background: {card_bg};
+        border: 1.5px dashed {border_color};
+        border-radius: 12px;
+        padding: 1.5rem;
+        text-align: center;
+        color: {text_secondary};
+    }}
+
+    /* Streamlit Tabs (High Contrast, Clearly Distinguishable) */
+    button[data-testid="stTab"] {{
+        color: {text_secondary} !important;
+        font-weight: 600 !important;
+        font-size: 0.92rem !important;
+        padding: 0.65rem 1.4rem !important;
+        border-bottom: 2px solid transparent !important;
+        background: transparent !important;
+        transition: all 0.2s ease !important;
+    }}
+    button[data-testid="stTab"]:hover {{
+        color: {text_primary} !important;
+    }}
+    button[data-testid="stTab"][aria-selected="true"] {{
+        color: #FF303A !important;
+        border-bottom: 2.5px solid {accent_crimson} !important;
+        font-weight: 800 !important;
+    }}
+
+    /* Clean Streamlit Buttons */
+    div.stButton > button,
+    button[data-testid="baseButton-secondary"] {{
+        background-color: {card_bg} !important;
+        color: {text_primary} !important;
+        border: 1.5px solid {border_color} !important;
+        border-radius: 10px !important;
+        padding: 0.55rem 1rem !important;
+        font-weight: 600 !important;
+        font-size: 0.88rem !important;
+        transition: all 0.2s ease !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+    }}
+    div.stButton > button:hover,
+    button[data-testid="baseButton-secondary"]:hover {{
+        background-color: {hover_bg} !important;
+        color: #FF303A !important;
+        border-color: {accent_crimson} !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 12px rgba(229, 9, 20, 0.2) !important;
+    }}
+
+    /* Primary Submit Button (Crimson Gradient #E50914) */
+    div.stButton > button[kind="primary"],
+    button[data-testid="baseButton-primary"] {{
+        background: linear-gradient(135deg, {accent_crimson} 0%, #B7000B 100%) !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 10px !important;
+        padding: 0.65rem 1.25rem !important;
+        font-weight: 700 !important;
+        font-size: 0.95rem !important;
+        letter-spacing: 0.01em !important;
+        box-shadow: 0 4px 14px rgba(229, 9, 20, 0.4) !important;
+        transition: all 0.2s ease !important;
+    }}
+    div.stButton > button[kind="primary"]:hover,
+    button[data-testid="baseButton-primary"]:hover {{
+        background: linear-gradient(135deg, {accent_crimson_hover} 0%, {accent_crimson} 100%) !important;
+        color: #FFFFFF !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 6px 18px rgba(229, 9, 20, 0.55) !important;
+    }}
+
+    /* Form Labels & Text Inputs */
+    div[data-testid="stTextInput"] label p,
+    div[data-testid="stSelectbox"] label p,
+    div[data-testid="stRadio"] label p,
+    div[data-testid="stDateInput"] label p,
+    div[data-testid="stTextArea"] label p,
+    div[data-testid="stCheckbox"] label p {{
+        color: {text_primary} !important;
+        font-weight: 600 !important;
+        font-size: 0.88rem !important;
+    }}
+    div[data-testid="stCheckbox"] span {{
+        color: {text_secondary} !important;
+        font-size: 0.84rem !important;
+    }}
+
+    div[data-baseweb="input"] {{
+        background-color: {input_bg} !important;
+        border: 1.5px solid {border_color} !important;
+        border-radius: 10px !important;
+    }}
+    div[data-baseweb="input"]:focus-within {{
+        border-color: {accent_crimson} !important;
+        box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.25) !important;
+    }}
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea {{
+        color: {text_primary} !important;
+        background-color: transparent !important;
+        font-size: 0.9rem !important;
+    }}
+    div[data-baseweb="textarea"] {{
+        background-color: {input_bg} !important;
+        border: 1.5px solid {border_color} !important;
+        border-radius: 10px !important;
+    }}
+    div[data-baseweb="input"] input::placeholder,
+    div[data-baseweb="textarea"] textarea::placeholder {{
+        color: {placeholder_color} !important;
+    }}
+
+    /* Selectbox */
+    div[data-baseweb="select"] {{
+        background-color: {input_bg} !important;
+        border-radius: 10px !important;
+    }}
+    div[data-baseweb="select"] > div {{
+        background-color: {input_bg} !important;
+        border: 1.5px solid {border_color} !important;
+        border-radius: 10px !important;
+        color: {text_primary} !important;
+    }}
+    </style>
+    """
+    st.markdown(clean_html(css), unsafe_allow_html=True)
+
+
+inject_theme_css(st.session_state.theme)
+
+# ==============================================================================
+# HELPERS & SINGLETONS
+# ==============================================================================
+@st.cache_data(ttl=10)
+def check_backend_health() -> bool:
+    try:
+        res = requests.get(f"{BACKEND_URL}/health", timeout=1.5)
+        return res.status_code == 200
+    except Exception:
+        return False
+
+
+@st.cache_resource
+def get_agent():
+    return CampusBookingAgent()
+
+
+# ==============================================================================
+# SAAS TWO-COLUMN AUTHENTICATION EXPERIENCE (BLACK & RED THEME)
+# ==============================================================================
+if st.session_state.authenticated_user is None:
+    is_dark = st.session_state.theme == "dark"
+
+    # Top Header Bar with Theme Switcher
+    c_top_l, c_top_theme = st.columns([8.2, 1.8])
+    with c_top_theme:
+        theme_label = "☀️ Switch to Light" if is_dark else "🌙 Switch to Dark"
+        if st.button(theme_label, key="toggle_theme_auth_btn", use_container_width=True):
+            st.session_state.theme = "light" if is_dark else "dark"
+            st.rerun()
+
+    # Main Two-Column Layout
+    col_left_brand, col_right_auth = st.columns([1.05, 1.25], gap="large")
+
+    # --------------------------------------------------------------------------
+    # LEFT PANEL: BRANDING & PLATFORM CAPABILITIES
+    # --------------------------------------------------------------------------
+    with col_left_brand:
+        # Top Badges
         st.markdown(
-            """
-            <div class="content-card" style="height: 100%;">
-                <span class="badge-live" style="margin-bottom: 0.8rem;">Autonomous Operations</span>
-                <h2 style="font-size: 1.55rem; font-weight: 800; color: #0f172a; margin: 0.2rem 0 0.6rem 0;">
-                    Smart Campus Scheduling
-                </h2>
-                <p style="color: #475569; font-size: 0.92rem; line-height: 1.6;">
-                    Sign in to coordinate campus laboratories and collaborative discussion rooms. Your verified profile ensures user-isolated bookings with zero scheduling conflicts.
-                </p>
-                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.9rem; margin-top: 1rem;">
-                    <div style="font-weight: 700; font-size: 0.85rem; color: #0f172a; margin-bottom: 0.3rem;">Demonstration Identity Policy:</div>
-                    <ul style="color: #475569; font-size: 0.82rem; padding-left: 1.1rem; margin: 0; line-height: 1.6;">
-                        <li><strong>Arnav</strong> is the primary demonstration profile.</li>
-                        <li>Every other student sees their <strong>own registered name</strong> (e.g. Rahul).</li>
-                        <li>Incomplete profiles display the neutral <strong>Student</strong> fallback.</li>
-                    </ul>
-                </div>
+            clean_html(f"""
+            <div style="display: flex; gap: 0.6rem; align-items: center; margin-bottom: 1.1rem; flex-wrap: wrap;">
+                <span style="background: rgba(229, 9, 20, 0.15); color: #FF303A; border: 1px solid rgba(229, 9, 20, 0.35); font-size: 0.72rem; font-weight: 700; padding: 0.25rem 0.75rem; border-radius: 9999px; letter-spacing: 0.03em;">● Academic Operations 2026</span>
+                <span style="color: {'#A1A1AA' if is_dark else '#64748B'}; font-size: 0.75rem; font-weight: 600;">v2.5 Production</span>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
-    with col_login:
-        st.markdown("### 🔐 Student Sign In")
-        tab_email, tab_demo = st.tabs(["📧 Email OTP Login", "⚡ Verified Demo Profiles"])
+        # CampusPilot AI Logo & Title
+        st.markdown(
+            clean_html(f"""
+            <div style="margin-bottom: 1.2rem;">
+                <div style="display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.3rem;">
+                    <span style="font-size: 2.2rem; line-height: 1;">🎓</span>
+                    <span style="font-size: 1.85rem; font-weight: 800; color: {'#FFFFFF' if is_dark else '#09090B'}; letter-spacing: -0.02em;">CampusPilot AI</span>
+                </div>
+                <div style="font-size: 0.95rem; font-weight: 700; color: #E50914; margin-bottom: 0.5rem; letter-spacing: -0.01em;">
+                    Smart Campus Facility & Operations Platform
+                </div>
+                <p style="font-size: 0.88rem; color: {'#A1A1AA' if is_dark else '#475569'}; line-height: 1.55; margin: 0;">
+                    CampusPilot AI connects students and faculty administrators with real-time availability across university computer laboratories, specialized engineering suites, and collaborative study rooms.
+                </p>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
 
-        with tab_email:
-            st.caption("Sign in with your email address via passwordless OTP code:")
-            if st.session_state.otp_step == "request":
-                with st.form("form_request_otp"):
-                    input_email = st.text_input("Email Address", placeholder="e.g. arnav@campus.edu or rahul@campus.edu")
-                    input_name = st.text_input("Full Name (Optional)", placeholder="e.g. Arnav")
-                    submit_otp = st.form_submit_button("📨 Send Verification Code", type="primary", use_container_width=True)
+        # Key Features Box
+        st.markdown(
+            clean_html(f"""
+            <div style="background: {'#111111' if is_dark else '#FFFFFF'}; border: 1px solid {'#292929' if is_dark else '#E4E4E7'}; border-radius: 14px; padding: 1.15rem; margin-bottom: 1rem; box-shadow: {'0 4px 14px rgba(0,0,0,0.3)' if is_dark else '0 2px 8px rgba(15,23,42,0.04)'};">
+                <div style="font-size: 0.75rem; font-weight: 800; color: #E50914; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.85rem;">
+                    Core Platform Capabilities
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.85rem;">
+                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+                        <span style="background: rgba(229, 9, 20, 0.15); color: #E50914; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">⚡</span>
+                        <div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Real-time Lab & Room Availability</div>
+                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Live workstation counts and automated schedule conflict checking across all campus zones.</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+                        <span style="background: rgba(16,185,129,0.15); color: #10B981; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">📅</span>
+                        <div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Smart Booking Management</div>
+                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Zero double-booking guarantee with automated slot verification and instant confirmation ID receipts.</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+                        <span style="background: rgba(229, 9, 20, 0.15); color: #FF303A; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🤖</span>
+                        <div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Gemini AI Campus Assistant</div>
+                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Autonomous natural language request parsing for equipment specs, capacity, and smart recommendations.</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+                        <span style="background: rgba(245,158,11,0.15); color: #F59E0B; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🛡️</span>
+                        <div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Role-Based Access Control</div>
+                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Dedicated Student workflows and Faculty/Administrator approval & facility override panels.</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+                        <span style="background: rgba(16,185,129,0.15); color: #10B981; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🏖️</span>
+                        <div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Automated Student Leave Policy</div>
+                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Instant rule-based auto-acceptance for academic & medical leaves with full admin oversight.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
 
-                if submit_otp and "@" in input_email and "." in input_email:
-                    with st.spinner("Dispatching verification code..."):
-                        res = send_email_otp(input_email.strip(), input_name.strip() if input_name else None)
-                        if res.get("success"):
-                            st.session_state.otp_email_sent_to = input_email.strip().lower()
-                            st.session_state.otp_student_name = input_name.strip() if input_name else ""
-                            st.session_state.otp_step = "verify"
-                            st.success(res.get("message", "Verification code dispatched."))
-                            time.sleep(0.5)
+        # Subtle Bottom Endorsement Card
+        st.markdown(
+            clean_html(f"""
+            <div style="background: {'#171717' if is_dark else '#F1F5F9'}; border: 1px dashed {'#292929' if is_dark else '#CBD5E1'}; border-radius: 12px; padding: 0.85rem 1rem;">
+                <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; display: flex; align-items: center; gap: 0.5rem; line-height: 1.45;">
+                    <span style="font-size: 1.05rem;">✨</span>
+                    <span>Trusted by university academic departments, computing laboratories, and student study centers across campus.</span>
+                </div>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
+
+    # --------------------------------------------------------------------------
+    # RIGHT PANEL: AUTHENTICATION CARD WITH DISTINCT TABS
+    # --------------------------------------------------------------------------
+    with col_right_auth:
+        tab_signin, tab_create = st.tabs(["🔐 Sign In", "📝 Create Account"])
+
+        # ======================================================================
+        # TAB 1: SIGN IN
+        # ======================================================================
+        with tab_signin:
+            st.markdown(
+                clean_html(f"""
+                <div style="margin-top: 0.35rem; margin-bottom: 1.1rem;">
+                    <h2 style="font-size: 1.35rem; font-weight: 800; color: {'#FFFFFF' if is_dark else '#09090B'}; margin: 0 0 0.25rem 0;">
+                        🔐 Welcome Back
+                    </h2>
+                    <p style="font-size: 0.84rem; color: {'#A1A1AA' if is_dark else '#64748B'}; margin: 0;">
+                        Sign in with your university credentials to enter your dashboard:
+                    </p>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+
+            # Email Input
+            login_email = st.text_input(
+                "University Email",
+                value="arnav@campus.edu",
+                placeholder="e.g. arnav@campus.edu or student@lpu.in",
+                key="signin_email_input",
+            )
+
+            # Password Input with Toggle
+            col_pwd_fld, col_pwd_chk = st.columns([3.4, 1.6])
+            with col_pwd_chk:
+                show_pwd = st.checkbox("Show password", key="signin_show_pwd")
+            with col_pwd_fld:
+                login_password = st.text_input(
+                    "Password",
+                    value="Password123",
+                    type="text" if show_pwd else "password",
+                    placeholder="Enter your account password",
+                    key="signin_pwd_input",
+                )
+
+            # Remember Me and Default Password Hint
+            c_rem, c_hint = st.columns([1, 1.2])
+            with c_rem:
+                st.checkbox("Remember me", value=True, key="signin_rem_me")
+            with c_hint:
+                st.markdown(
+                    clean_html(f"""
+                    <div style="text-align: right; font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; padding-top: 0.35rem;">
+                        🔒 Default Demo: <code style="color: #FF303A; background: {'#151515' if is_dark else '#F1F5F9'}; padding: 2px 6px; border-radius: 4px; border: 1px solid {'#292929' if is_dark else '#CBD5E1'}; font-weight: 600;">Password123</code>
+                    </div>
+                    """),
+                    unsafe_allow_html=True,
+                )
+
+            # Full-Width Crimson Sign In Button
+            btn_signin = st.button("⚡ Sign In to CampusPilot", type="primary", use_container_width=True, key="btn_signin_submit")
+
+            if btn_signin:
+                with st.spinner("Authenticating credentials..."):
+                    success, res = authenticate_user(login_email, login_password)
+                    if success:
+                        st.session_state.authenticated_user = res
+                        st.session_state.current_page = None  # Reset page to role default
+                        st.success(f"Welcome, {res.get('display_name') or res.get('full_name')}!")
+                        time.sleep(0.3)
+                        st.rerun()
+                    else:
+                        st.error(res)
+
+            # Dedicated Faculty / Administrator Access Portal
+            # (Student demo buttons strictly removed per prompt requirements!)
+            st.markdown(
+                clean_html(f"""
+                <div style="background: {'#171717' if is_dark else '#F8FAFC'}; border: 1px solid {'#292929' if is_dark else '#E2E8F0'}; border-radius: 12px; padding: 0.95rem; margin-top: 1.4rem;">
+                    <div style="font-size: 0.86rem; font-weight: 800; color: #E50914; display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.2rem;">
+                        <span>🛡️</span> Faculty & Administrator Demonstration Portal
+                    </div>
+                    <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; margin-bottom: 0.75rem; line-height: 1.4;">
+                        College faculty and evaluators can instantly authenticate to review pending student requests, test approvals, and manage campus facilities.
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+
+            if st.button("🛡️ Log In as Faculty Administrator (Dr. Sharma)", key="btn_quick_admin", use_container_width=True):
+                _, u = authenticate_user("admin@campus.edu", "AdminPass123")
+                st.session_state.authenticated_user = u
+                st.session_state.current_page = None
+                st.rerun()
+
+        # ======================================================================
+        # TAB 2: CREATE ACCOUNT (STUDENT REGISTRATION ONLY)
+        # ======================================================================
+        with tab_create:
+            st.markdown(
+                clean_html(f"""
+                <div style="margin-top: 0.35rem; margin-bottom: 1.1rem;">
+                    <h2 style="font-size: 1.35rem; font-weight: 800; color: {'#FFFFFF' if is_dark else '#09090B'}; margin: 0 0 0.25rem 0;">
+                        📝 Register Student Account
+                    </h2>
+                    <p style="font-size: 0.84rem; color: {'#A1A1AA' if is_dark else '#64748B'}; margin: 0;">
+                        Create your verified student profile to book labs, study rooms, and submit leave requests:
+                    </p>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+
+            # Full Name
+            reg_fullname = st.text_input(
+                "Full Legal Name *",
+                placeholder="e.g. Divyanshu Verma",
+                key="create_fullname_input",
+            )
+
+            # University Email
+            reg_email = st.text_input(
+                "University Email *",
+                placeholder="e.g. divyanshu@campus.edu or student@lpu.in",
+                key="create_email_input",
+            )
+
+            # Student ID / Roll Number & Department
+            c_sid, c_dept = st.columns([1, 1.2])
+            with c_sid:
+                reg_student_id = st.text_input(
+                    "Student ID / Roll No *",
+                    placeholder="e.g. CS2026-088",
+                    key="create_studentid_input",
+                )
+            with c_dept:
+                reg_department = st.selectbox(
+                    "Department *",
+                    [
+                        "Computer Science & Engineering",
+                        "Artificial Intelligence & Data Science",
+                        "Electronics & Communication",
+                        "Information Technology",
+                        "Mechanical Engineering",
+                    ],
+                    key="create_dept_input",
+                )
+
+            # Passwords Row
+            c_pwd1, c_pwd2 = st.columns(2)
+            with c_pwd1:
+                reg_password = st.text_input(
+                    "Password *",
+                    type="text" if st.session_state.get("show_reg_pwd_check") else "password",
+                    placeholder="Create secure password",
+                    key="create_pwd_input",
+                )
+            with c_pwd2:
+                reg_confirm_password = st.text_input(
+                    "Confirm Password *",
+                    type="text" if st.session_state.get("show_reg_pwd_check") else "password",
+                    placeholder="Re-enter password",
+                    key="create_pwd_confirm_input",
+                )
+
+            st.checkbox("Show passwords", key="show_reg_pwd_check")
+
+            # Password Requirement Indicators
+            p_len = len(reg_password) >= 8
+            p_up = bool(re.search(r"[A-Z]", reg_password))
+            p_low = bool(re.search(r"[a-z]", reg_password))
+            p_num = bool(re.search(r"\d", reg_password))
+
+            color_ok = "#10B981"
+            color_mute = "#71717A" if is_dark else "#A1A1AA"
+
+            st.markdown(
+                clean_html(f"""
+                <div style="margin: 0.5rem 0 0.9rem 0; padding: 0.75rem 0.9rem; background: {'#151515' if is_dark else '#F8FAFC'}; border: 1px solid {'#292929' if is_dark else '#E2E8F0'}; border-radius: 10px;">
+                    <div style="font-size: 0.74rem; font-weight: 700; color: {'#A1A1AA' if is_dark else '#64748B'}; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.4rem;">
+                        Password Security Checklist:
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; font-size: 0.75rem;">
+                        <div style="color: {color_ok if p_len else color_mute}; font-weight: 600;">{'✓' if p_len else '○'} 8+ Characters</div>
+                        <div style="color: {color_ok if p_up else color_mute}; font-weight: 600;">{'✓' if p_up else '○'} Uppercase Letter (A-Z)</div>
+                        <div style="color: {color_ok if p_low else color_mute}; font-weight: 600;">{'✓' if p_low else '○'} Lowercase Letter (a-z)</div>
+                        <div style="color: {color_ok if p_num else color_mute}; font-weight: 600;">{'✓' if p_num else '○'} Number (0-9)</div>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+
+            # Terms and Conditions
+            reg_terms = st.checkbox(
+                "I agree to the University Campus Facilities Policy & Terms of Service *",
+                value=False,
+                key="create_terms_check",
+            )
+
+            # Prominent Full-Width Crimson Create Account Button (Strictly Student Role)
+            btn_create = st.button("🚀 Create Student Account & Enter Dashboard", type="primary", use_container_width=True, key="btn_create_submit")
+
+            if btn_create:
+                if not reg_fullname.strip() or not reg_email.strip() or not reg_password:
+                    st.error("Please fill in all required fields marked with *.")
+                elif not reg_terms:
+                    st.error("Please accept the Terms of Service to create an account.")
+                elif reg_password != reg_confirm_password:
+                    st.error("Passwords do not match. Please re-enter identical passwords.")
+                else:
+                    with st.spinner("Creating your verified student account..."):
+                        reg_ok, reg_res = register_user(
+                            email=reg_email.strip(),
+                            password=reg_password,
+                            full_name=reg_fullname.strip(),
+                            account_type="Student",  # Strictly locked to Student
+                            student_id=reg_student_id.strip(),
+                            department=reg_department.strip(),
+                        )
+                        if reg_ok:
+                            st.session_state.authenticated_user = reg_res
+                            st.session_state.current_page = None
+                            st.success(f"🎉 Welcome to CampusPilot AI, {reg_res['full_name']}!")
+                            time.sleep(0.4)
                             st.rerun()
                         else:
-                            st.error(res.get("error", "Failed to dispatch verification code."))
-            else:
-                sent_to = st.session_state.otp_email_sent_to
-                st.info(f"Verification code sent to **{sent_to}**.")
-                with st.form("form_verify_otp"):
-                    input_otp = st.text_input("Enter 6-Digit Code", max_chars=6, placeholder="e.g. 123456")
-                    submit_verify = st.form_submit_button("✅ Verify & Enter Dashboard", type="primary", use_container_width=True)
+                            st.error(reg_res)
 
-                if submit_verify and input_otp.strip():
-                    with st.spinner("Verifying code..."):
-                        ver_res = verify_email_otp(sent_to, input_otp.strip(), st.session_state.otp_student_name)
-                        if ver_res.get("success"):
-                            st.session_state.authenticated_user = ver_res
-                            st.session_state.otp_step = "request"
-                            st.success("Verification successful!")
-                            time.sleep(0.5)
-                            st.rerun()
-                        else:
-                            st.error(ver_res.get("error", "Verification failed."))
-
-        with tab_demo:
-            st.caption("Instant verified profiles for presentation and evaluation:")
-            demo_profs = get_demo_profiles()
-            for prof in demo_profs:
-                disp_label = prof["full_name"] if prof.get("full_name") else "New Student (Incomplete Profile)"
-                btn_caption = f"⚡ Continue as {disp_label} ({prof['email']})"
-                if st.button(btn_caption, key=f"demo_btn_{prof['user_id']}", use_container_width=True):
-                    upsert_student_profile(
-                        user_id=prof["user_id"],
-                        full_name=prof["full_name"],
-                        email=prof["email"],
-                        department=prof.get("department", "Engineering & Technology"),
-                    )
-                    st.session_state.authenticated_user = prof
-                    st.session_state.messages = []
-                    st.session_state.langchain_history = []
-                    st.session_state.pending_booking = None
-                    st.rerun()
+            st.markdown(
+                clean_html(f"""
+                <div style="text-align: center; margin-top: 1.1rem; font-size: 0.8rem; color: {'#A1A1AA' if is_dark else '#64748B'};">
+                    Already registered? Select the <strong>Sign In</strong> tab above.
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
 
     st.stop()
 
 
 # ==============================================================================
-# DYNAMIC STUDENT IDENTITY RESOLUTION
+# DYNAMIC STUDENT / ADMIN IDENTITY RESOLUTION
 # ==============================================================================
-auth_user = st.session_state.authenticated_user or AVAILABLE_PROFILES[0]
-user_id = str(auth_user.get("user_id", "student_arnav_001")).strip()
+auth_user = st.session_state.authenticated_user
+user_id = str(auth_user.get("student_id") or auth_user.get("user_id") or "CS2026-001").strip()
+account_type = auth_user.get("account_type", "Student")
+is_admin = account_type == "Administrator"
+student_email = auth_user.get("email", "student@campus.edu")
+university_name = auth_user.get("university", "Lovely Professional University")
 
-# Always check SQLite database for the freshest registered student record
-db_profile = get_student_profile(user_id) or get_student_profile_by_email(auth_user.get("email", ""))
+# Resolve actual full name and display name dynamically
+db_profile = get_student_profile(auth_user.get("user_id", "")) or get_student_profile_by_email(student_email)
 if db_profile:
-    raw_name = db_profile.get("full_name", "").strip()
-    student_email = db_profile.get("email", auth_user.get("email", "arnav@campus.edu"))
-    department = db_profile.get("department", "Computer Science & Engineering")
+    raw_name = db_profile.get("full_name", "").strip() or auth_user.get("full_name", "").strip()
+    department = db_profile.get("department", auth_user.get("department", "Engineering & Technology"))
 else:
     raw_name = auth_user.get("full_name", "").strip()
-    student_email = auth_user.get("email", "arnav@campus.edu")
-    department = auth_user.get("department", "Computer Science & Engineering")
+    department = auth_user.get("department", "Engineering & Technology")
 
-# Neutral fallback "Student" if full_name is missing (never hardcoded or randomized)
-student_name = raw_name if raw_name else "Student"
-has_completed_profile = bool(raw_name)
+display_name = auth_user.get("display_name", "").strip() or raw_name or "Student"
+student_name = raw_name or display_name or ("Administrator" if is_admin else "Student")
+avatar_icon = auth_user.get("avatar", "🛡️" if is_admin else "👨‍🎓")
 
 date_ctx = get_current_date_context()
 today_str = date_ctx["today"]
 tomorrow_str = date_ctx["tomorrow"]
+
 
 # ==============================================================================
 # BOOKING COMMIT HELPER
@@ -692,17 +1097,19 @@ def confirm_pending_booking():
             booking_id_val = booking_id_match.group(1) if booking_id_match else "CONFIRMED"
 
             if is_smtp_configured():
-                email_result = send_booking_confirmation_email(
-                    recipient_email=student_email,
-                    recipient_name=student_name,
-                    facility_name=pending["item_name"],
-                    booking_date=pending["booking_date"],
-                    start_time=pending["start_time"],
-                    end_time=pending["end_time"],
-                    booking_id=booking_id_val,
-                    facility_type=facility_label,
-                )
-                st.session_state.last_email_result = email_result
+                try:
+                    send_booking_confirmation_email(
+                        recipient_email=student_email,
+                        recipient_name=student_name,
+                        facility_name=pending["item_name"],
+                        booking_date=pending["booking_date"],
+                        start_time=pending["start_time"],
+                        end_time=pending["end_time"],
+                        booking_id=booking_id_val,
+                        facility_type=facility_label,
+                    )
+                except Exception as mail_err:
+                    print(f"[Email Notification Note] {mail_err}")
 
             st.session_state.messages.append(
                 {
@@ -791,41 +1198,64 @@ def process_user_input(user_text: str):
 
 
 # ==============================================================================
-# SIDEBAR NAVIGATION & STUDENT PROFILE
+# ROLE-BASED NAVIGATION PAGES
 # ==============================================================================
-NAV_PAGES = [
-    "📊 Dashboard",
-    "💬 AI Assistant",
-    "🔬 Lab Booking",
-    "📚 Discussion Rooms",
-    "📋 My Bookings",
-    "🏢 Facilities",
-    "📈 Analytics",
-    "⚙️ Settings",
-]
+if is_admin:
+    NAV_PAGES = [
+        "🛡️ Admin Dashboard",
+        "📥 Booking Requests",
+        "🏢 Facility Management",
+        "🏖️ Leave Oversight",
+        "💬 AI Assistant",
+        "⚙️ Settings",
+    ]
+    if st.session_state.current_page not in NAV_PAGES:
+        st.session_state.current_page = "🛡️ Admin Dashboard"
+else:
+    NAV_PAGES = [
+        "📊 Student Dashboard",
+        "💬 AI Assistant",
+        "🔬 Lab Booking",
+        "📚 Discussion Rooms",
+        "📋 My Bookings",
+        "🏖️ Leave Requests",
+        "🏢 Facilities",
+        "⚙️ Settings",
+    ]
+    if st.session_state.current_page not in NAV_PAGES:
+        st.session_state.current_page = "📊 Student Dashboard"
 
+
+# ==============================================================================
+# SIDEBAR NAVIGATION
+# ==============================================================================
 with st.sidebar:
     st.markdown(
-        """
+        clean_html(f"""
         <div style="padding: 0.4rem 0.2rem 0.8rem 0.2rem; display: flex; align-items: center; gap: 0.6rem;">
             <span style="font-size: 1.75rem;">🎓</span>
             <div>
-                <div style="font-weight: 800; font-size: 1.2rem; color: #ffffff; letter-spacing: -0.02em;">CampusPilot AI</div>
-                <div style="font-size: 0.72rem; color: #94a3b8; font-weight: 500;">Smart Campus Operations</div>
+                <div style="font-weight: 800; font-size: 1.2rem; color: #FFFFFF; letter-spacing: -0.02em;">CampusPilot AI</div>
+                <div style="font-size: 0.72rem; color: #E50914; font-weight: 700;">{'Faculty Admin Portal' if is_admin else 'Student Operations'}</div>
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True,
     )
 
-    # Prominent New Booking Button
-    if st.button("➕ New Booking", type="primary", use_container_width=True):
-        st.session_state.current_page = "💬 AI Assistant"
-        st.rerun()
+    # Action Button in Sidebar
+    if is_admin:
+        if st.button("📥 Review Requests", type="primary", use_container_width=True, key="sidebar_admin_req"):
+            st.session_state.current_page = "📥 Booking Requests"
+            st.rerun()
+    else:
+        if st.button("➕ New Booking Request", type="primary", use_container_width=True, key="sidebar_new_booking"):
+            st.session_state.current_page = "🔬 Lab Booking"
+            st.rerun()
 
-    st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 0.4rem;'></div>", unsafe_allow_html=True)
 
-    # Clean Navigation Selection
+    # Navigation Menu
     current_idx = NAV_PAGES.index(st.session_state.current_page) if st.session_state.current_page in NAV_PAGES else 0
     selected_nav = st.radio(
         "Navigation Menu",
@@ -840,51 +1270,31 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Bottom Profile Card
-    avatar_icon = "👨‍🎓" if student_name in ("Arnav", "Rahul") else "🧑‍🎓"
+    # Bottom Authenticated User Profile Card
+    role_color = "#E50914" if is_admin else "#10B981"
     st.markdown(
-        f"""
-        <div style="background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 0.85rem; margin-top: 0.8rem;">
+        clean_html(f"""
+        <div style="background: {'#111111' if st.session_state.theme == 'dark' else '#F1F5F9'}; border: 1px solid {'#292929' if st.session_state.theme == 'dark' else '#CBD5E1'}; border-radius: 12px; padding: 0.85rem; margin-top: 0.8rem;">
             <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
-                <span style="font-size: 1.25rem;">{avatar_icon}</span>
+                <span style="font-size: 1.35rem;">{avatar_icon}</span>
                 <div>
-                    <div style="font-weight: 700; font-size: 0.9rem; color: #ffffff;">{student_name}</div>
-                    <div style="font-size: 0.7rem; color: #94a3b8;">{student_email}</div>
+                    <div style="font-weight: 700; font-size: 0.92rem; color: {'#FFFFFF' if st.session_state.theme == 'dark' else '#09090B'};">{student_name}</div>
+                    <div style="font-size: 0.7rem; color: {'#A1A1AA' if st.session_state.theme == 'dark' else '#64748B'};">{student_email}</div>
                 </div>
             </div>
             <div style="display: flex; gap: 0.3rem; margin-top: 0.4rem;">
-                <span style="background: rgba(255,255,255,0.12); color: #cbd5e1; font-size: 0.65rem; padding: 0.12rem 0.45rem; border-radius: 4px; font-weight: 600;">{user_id[:13]}</span>
-                <span style="background: rgba(99,102,241,0.25); color: #a5b4fc; font-size: 0.65rem; padding: 0.12rem 0.45rem; border-radius: 4px; font-weight: 600;">{department[:16]}</span>
+                <span style="background: rgba(255,255,255,0.08); color: {'#FFFFFF' if st.session_state.theme == 'dark' else '#09090B'}; font-size: 0.65rem; padding: 0.12rem 0.45rem; border-radius: 4px; font-weight: 600;">{user_id}</span>
+                <span style="background: rgba(229,9,20,0.15); color: {role_color}; font-size: 0.65rem; padding: 0.12rem 0.45rem; border-radius: 4px; font-weight: 700;">{account_type}</span>
             </div>
+            <div style="font-size: 0.68rem; color: {'#A1A1AA' if st.session_state.theme == 'dark' else '#64748B'}; margin-top: 0.4rem;">🏛️ {university_name}</div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True,
     )
 
-    # Dynamic Student Profile Switcher (allows evaluators to test identities seamlessly)
-    st.caption("👤 Switch Student Profile:")
-    prof_labels = ["Arnav (Demo)", "Rahul (Demo)", "Student (Neutral Profile)"]
-    current_prof_idx = 0
-    if student_name == "Rahul":
-        current_prof_idx = 1
-    elif not has_completed_profile or student_name == "Student":
-        current_prof_idx = 2
-
-    chosen_prof = st.selectbox(
-        "Active Profile",
-        prof_labels,
-        index=current_prof_idx,
-        label_visibility="collapsed",
-    )
-    new_profile_target = AVAILABLE_PROFILES[prof_labels.index(chosen_prof)]
-    if new_profile_target["user_id"] != user_id:
-        upsert_student_profile(
-            user_id=new_profile_target["user_id"],
-            full_name=new_profile_target["full_name"],
-            email=new_profile_target["email"],
-            department=new_profile_target.get("department", "Engineering & Technology"),
-        )
-        st.session_state.authenticated_user = new_profile_target
+    if st.button("🚪 Sign Out", use_container_width=True, key="sidebar_logout_btn"):
+        st.session_state.authenticated_user = None
+        st.session_state.current_page = None
         st.session_state.messages = []
         st.session_state.langchain_history = []
         st.session_state.pending_booking = None
@@ -903,427 +1313,584 @@ status_pill = (
     else '<span class="badge-offline">● Backend Offline</span>'
 )
 
-st.markdown(
-    f"""
-    <div class="top-navbar">
-        <div class="brand-group">
-            <span style="font-size: 1.3rem;">🎓</span>
-            <span class="brand-title">CampusPilot AI</span>
-            <span class="brand-tagline">Smart Campus Operations & Facility Booking</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 0.65rem;">
-            {status_pill}
-            <span class="badge-profile-chip">🔔 2 Alerts</span>
-            <span class="badge-profile-chip">{avatar_icon} {student_name} ({user_id[:12]})</span>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+c_nav_left, c_nav_right = st.columns([2.2, 1.6])
 
-# Fetch core data for metrics
-labs = get_all_laboratories()
-rooms = get_all_discussion_rooms()
-today_lab_bookings = get_bookings_by_date(today_str)
-today_room_bookings = get_room_bookings_by_date(today_str)
-total_today_bookings = len(today_lab_bookings) + len(today_room_bookings)
-
-
-# ==============================================================================
-# VIEW 1: 📊 DASHBOARD
-# ==============================================================================
-if st.session_state.current_page == "📊 Dashboard":
-    # 1. Compact Hero Welcome Banner
+with c_nav_left:
     st.markdown(
-        f"""
-        <div class="hero-banner">
-            <h2 class="hero-title">Welcome back, {student_name}! 👋</h2>
-            <p class="hero-subtitle">
-                Your autonomous campus scheduling assistant. Describe what you need in plain English — I will search real-time SQLite availability, rank the best facilities, and confirm your reservation with zero conflicts.
-            </p>
+        clean_html(f"""
+        <div style="display: flex; align-items: center; gap: 0.65rem; padding: 0.4rem 0;">
+            <span style="font-size: 1.35rem;">🎓</span>
+            <div>
+                <span class="brand-title">CampusPilot AI</span>
+                <span class="brand-tagline">{'Faculty Administration' if is_admin else 'Smart Facility Operations'}</span>
+            </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True,
     )
 
-    # 2. Suggested Prompt Chips (Direct AI Triggers - Eliminating Duplicate Input)
+with c_nav_right:
+    c_pills, c_th_btn = st.columns([2.2, 1.1])
+    with c_pills:
+        st.markdown(
+            clean_html(f"""
+            <div style="display: flex; align-items: center; justify-content: flex-end; gap: 0.45rem; padding: 0.35rem 0;">
+                {status_pill}
+                <span class="badge-profile-chip">{avatar_icon} {student_name}</span>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
+    with c_th_btn:
+        theme_icon = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
+        if st.button(theme_icon, key="nav_theme_toggle_btn", use_container_width=True):
+            st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
+            st.rerun()
+
+# Shared live facility data
+labs = get_all_laboratories()
+rooms = get_all_discussion_rooms()
+
+
+# ==============================================================================
+# ==============================================================================
+# ADMINISTRATOR VIEWS
+# ==============================================================================
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# ADMIN VIEW 1: 🛡️ ADMIN DASHBOARD
+# ------------------------------------------------------------------------------
+if is_admin and st.session_state.current_page == "🛡️ Admin Dashboard":
+    metrics = get_admin_dashboard_metrics()
+
+    st.markdown(
+        clean_html(f"""
+        <div class="hero-banner">
+            <h2 class="hero-title">Faculty Administrator Portal — {student_name} 🛡️</h2>
+            <p class="hero-subtitle">
+                Departmental facility oversight, student booking approval queues, and facility operational controls.
+                Real-time metrics computed directly from SQLite database.
+            </p>
+        </div>
+        """),
+        unsafe_allow_html=True,
+    )
+
+    # 4 Metric Cards
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(
+            clean_html(f"""
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">Pending Requests</span>
+                    <span class="stat-icon">⏳</span>
+                </div>
+                <div class="stat-value" style="color: {'#FF303A' if metrics['pending_requests'] > 0 else '#FFFFFF'};">{metrics['pending_requests']}</div>
+                <div class="stat-footer" style="color: #F59E0B;">
+                    <span>● Requires Review</span>
+                </div>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            clean_html(f"""
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">Approved Bookings</span>
+                    <span class="stat-icon">✅</span>
+                </div>
+                <div class="stat-value">{metrics['approved_requests']}</div>
+                <div class="stat-footer" style="color: #10B981;">
+                    <span>● Confirmed in Schedule</span>
+                </div>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
+    with c3:
+        st.markdown(
+            clean_html(f"""
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">Rejected Requests</span>
+                    <span class="stat-icon">❌</span>
+                </div>
+                <div class="stat-value">{metrics['rejected_requests']}</div>
+                <div class="stat-footer" style="color: #E50914;">
+                    <span>● With Documented Reason</span>
+                </div>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
+    with c4:
+        st.markdown(
+            clean_html(f"""
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">Active Facilities</span>
+                    <span class="stat-icon">🏢</span>
+                </div>
+                <div class="stat-value">{metrics['active_laboratories'] + metrics['active_rooms']}</div>
+                <div class="stat-footer" style="color: #10B981;">
+                    <span>● {metrics['active_laboratories']} Labs &bull; {metrics['active_rooms']} Rooms</span>
+                </div>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
+
+    # Quick Jump to Pending Queue
+    if metrics["pending_requests"] > 0:
+        st.warning(f"⚠️ You have **{metrics['pending_requests']} student booking request(s)** awaiting administrative review.")
+        if st.button("👉 Open Pending Requests Queue", type="primary", key="btn_dash_open_pending"):
+            st.session_state.current_page = "📥 Booking Requests"
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### 📋 Recent Booking Submissions Across Campus")
+
+    recent_requests = get_all_booking_requests()[:6]
+    if recent_requests:
+        for r in recent_requests:
+            stat = r.get("status", "pending")
+            badge = "badge-live" if stat in ("approved", "confirmed") else ("badge-rejected" if stat == "rejected" else "badge-pending")
+            st.markdown(
+                clean_html(f"""
+                <div class="booking-row">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                        <span style="font-weight: 700; font-size: 0.95rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #A1A1AA;">({r['service_type']})</span></span>
+                        <span class="{badge}">{stat.upper()} &bull; #{r['booking_id']}</span>
+                    </div>
+                    <div style="font-size: 0.82rem; color: #A1A1AA;">
+                        👤 <b>{r['student_name']}</b> ({r['student_id']}) &bull; 📅 {r['booking_date']} &bull; ⏰ {r['start_time']} - {r['end_time']}<br>
+                        🎯 <b>Purpose:</b> {r.get('purpose') or 'Academic / General Practical'}
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("No booking requests recorded in the system yet.")
+
+
+# ------------------------------------------------------------------------------
+# ADMIN VIEW 2: 📥 BOOKING REQUESTS (APPROVAL & REJECTION WORKFLOW)
+# ------------------------------------------------------------------------------
+elif is_admin and st.session_state.current_page == "📥 Booking Requests":
+    st.markdown("### 📥 Student Facility Booking Requests")
+    st.caption("Review incoming student requests, verify schedule availability, and execute approvals or rejections with documented reasons:")
+
+    req_tab_all, req_tab_pending, req_tab_appr, req_tab_rej = st.tabs([
+        "All Requests",
+        "⏳ Pending Approval (Action Required)",
+        "✅ Approved",
+        "❌ Rejected",
+    ])
+
+    def render_admin_request_list(status_filter=None, tab_key="all"):
+        requests_list = get_all_booking_requests(status_filter=status_filter)
+        if not requests_list:
+            st.info(f"No requests found matching filter: {status_filter or 'All'}.")
+            return
+
+        for r in requests_list:
+            b_id = r["booking_id"]
+            s_type = r["service_type"]
+            cur_status = r.get("status", "pending")
+            status_badge = "badge-live" if cur_status in ("approved", "confirmed") else ("badge-rejected" if cur_status == "rejected" else "badge-pending")
+
+            col_card, col_action = st.columns([3.2, 1.8])
+            with col_card:
+                rejection_html = ""
+                if cur_status == "rejected" and r.get("rejection_reason"):
+                    rejection_html = f"""<div class="rejection-box"><b>Rejection Reason:</b> {r['rejection_reason']}</div>"""
+
+                st.markdown(
+                    clean_html(f"""
+                    <div class="content-card" style="margin-bottom: 0.75rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                            <span style="font-weight: 800; font-size: 1.05rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #A1A1AA;">({s_type})</span></span>
+                            <span class="{status_badge}">{cur_status.upper()} &bull; #{b_id}</span>
+                        </div>
+                        <div style="font-size: 0.84rem; color: #A1A1AA; line-height: 1.5;">
+                            👤 <b>Student:</b> {r['student_name']} &bull; <b>ID:</b> <code>{r['student_id']}</code><br>
+                            📅 <b>Date:</b> {r['booking_date']} &bull; ⏰ <b>Slot:</b> {r['start_time']} - {r['end_time']}<br>
+                            🎯 <b>Purpose:</b> <i>{r.get('purpose') or 'Not specified'}</i>
+                        </div>
+                        {rejection_html}
+                    </div>
+                    """),
+                    unsafe_allow_html=True,
+                )
+
+            with col_action:
+                if cur_status == "pending":
+                    # Approve Action
+                    if st.button("✅ Approve Request", key=f"adm_appr_{tab_key}_{b_id}", type="primary", use_container_width=True):
+                        ok, msg = approve_booking(b_id, s_type)
+                        if ok:
+                            st.success(f"Request #{b_id} Approved!")
+                            time.sleep(0.4)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+
+                    # Reject Expander
+                    with st.expander("❌ Reject with Reason", expanded=False):
+                        rej_reason = st.text_input(
+                            "Rejection Reason",
+                            value="Departmental priority examination scheduled during this slot",
+                            key=f"rej_reason_in_{tab_key}_{b_id}",
+                        )
+                        if st.button("Confirm Rejection", key=f"adm_rej_{tab_key}_{b_id}", use_container_width=True):
+                            if reject_booking(b_id, s_type, rej_reason):
+                                st.warning(f"Request #{b_id} Rejected.")
+                                time.sleep(0.4)
+                                st.rerun()
+                elif cur_status in ("approved", "confirmed"):
+                    st.caption("Approved and active in schedule.")
+                    if st.button("Revoke / Cancel", key=f"adm_cancel_{tab_key}_{b_id}", use_container_width=True):
+                        cancel_reservation(b_id, s_type)
+                        st.info(f"Booking #{b_id} cancelled.")
+                        time.sleep(0.4)
+                        st.rerun()
+                else:
+                    st.caption(f"Status: {cur_status.capitalize()}")
+
+    with req_tab_all:
+        render_admin_request_list(status_filter=None, tab_key="all")
+    with req_tab_pending:
+        render_admin_request_list(status_filter="pending", tab_key="pending")
+    with req_tab_appr:
+        render_admin_request_list(status_filter="approved", tab_key="approved")
+    with req_tab_rej:
+        render_admin_request_list(status_filter="rejected", tab_key="rejected")
+
+
+# ------------------------------------------------------------------------------
+# ADMIN VIEW 3: 🏢 FACILITY MANAGEMENT (ENABLE / DISABLE TOGGLES)
+# ------------------------------------------------------------------------------
+elif is_admin and st.session_state.current_page == "🏢 Facility Management":
+    st.markdown("### 🏢 Campus Facility Operational Management")
+    st.caption("Enable or disable facility booking for maintenance, exams, or departmental overrides:")
+
+    st.markdown("#### 🔬 Computer Laboratories")
+    for lab in labs:
+        c_info, c_toggle = st.columns([3.5, 1.5])
+        is_en = bool(lab.get("is_enabled", 1))
+        with c_info:
+            st.markdown(
+                clean_html(f"""
+                <div class="content-card" style="margin-bottom: 0.6rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-weight: 800; font-size: 1.05rem;">{lab['lab_name']}</span>
+                        <span class="{'badge-live' if is_en else 'badge-offline'}">{'🟢 BOOKING ENABLED' if is_en else '🔴 BOOKING DISABLED'}</span>
+                    </div>
+                    <div style="font-size: 0.82rem; color: #A1A1AA; margin-top: 0.2rem;">
+                        📍 {lab['location']} &bull; 👥 Capacity: <b>{lab['capacity']} Workstations</b>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+        with c_toggle:
+            btn_label = "🔒 Disable Lab" if is_en else "🔓 Enable Lab"
+            if st.button(btn_label, key=f"toggle_lab_{lab['lab_id']}", use_container_width=True):
+                toggle_facility_status("lab", lab["lab_id"], 0 if is_en else 1)
+                st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### 📚 Discussion Rooms")
+    for room in rooms:
+        c_rinfo, c_rtoggle = st.columns([3.5, 1.5])
+        is_ren = bool(room.get("is_enabled", 1))
+        with c_rinfo:
+            st.markdown(
+                clean_html(f"""
+                <div class="content-card" style="margin-bottom: 0.6rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-weight: 800; font-size: 1.05rem;">{room['room_name']}</span>
+                        <span class="{'badge-live' if is_ren else 'badge-offline'}">{'🟢 BOOKING ENABLED' if is_ren else '🔴 BOOKING DISABLED'}</span>
+                    </div>
+                    <div style="font-size: 0.82rem; color: #A1A1AA; margin-top: 0.2rem;">
+                        📍 {room['location']} &bull; 👥 Capacity: <b>{room['capacity']} Seats</b>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+        with c_rtoggle:
+            rbtn_label = "🔒 Disable Room" if is_ren else "🔓 Enable Room"
+            if st.button(rbtn_label, key=f"toggle_room_{room['room_id']}", use_container_width=True):
+                toggle_facility_status("room", room["room_id"], 0 if is_ren else 1)
+                st.rerun()
+
+
+# ------------------------------------------------------------------------------
+# ADMIN VIEW 4: 🏖️ LEAVE OVERSIGHT
+# ------------------------------------------------------------------------------
+elif is_admin and st.session_state.current_page == "🏖️ Leave Oversight":
+    st.markdown("### 🏖️ Campus Student Leave Requests Oversight")
+    st.caption("Administrative log of student leave requests submitted across campus departments with automated policy decisions:")
+
+    all_leaves = get_all_leave_requests()
+    if all_leaves:
+        st.markdown(f"**Total Leaves Logged:** `{len(all_leaves)}`")
+        for l in all_leaves:
+            st.markdown(
+                clean_html(f"""
+                <div class="content-card" style="margin-bottom: 0.75rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                        <span style="font-weight: 800; font-size: 1.05rem;">{l['leave_type']} &bull; {l['student_name']}</span>
+                        <span class="badge-live">{l['status']}</span>
+                    </div>
+                    <div style="font-size: 0.84rem; color: #A1A1AA; line-height: 1.5;">
+                        👤 <b>ID:</b> <code>{l['student_id']}</code> &bull; <b>Email:</b> {l['student_email']}<br>
+                        📅 <b>Dates:</b> {l['start_date']} to {l['end_date']}<br>
+                        📝 <b>Reason:</b> <i>{l['reason']}</i>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("No student leave requests recorded yet.")
+
+
+# ==============================================================================
+# ==============================================================================
+# STUDENT VIEWS
+# ==============================================================================
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# STUDENT VIEW 1: 📊 STUDENT DASHBOARD
+# ------------------------------------------------------------------------------
+elif not is_admin and st.session_state.current_page == "📊 Student Dashboard":
+    # 1. Personalized Hero Welcome Banner
+    st.markdown(
+        clean_html(f"""
+        <div class="hero-banner">
+            <h2 class="hero-title">Welcome back, {student_name}! 👋</h2>
+            <p class="hero-subtitle">
+                Logged in as <b>Student</b> &bull; Roll No: <code>{user_id}</code> &bull; Department: <b>{department}</b>.<br>
+                State your request in natural language — CampusPilot AI verifies real-time SQLite availability,
+                detects scheduling conflicts, and submits your booking requests.
+            </p>
+        </div>
+        """),
+        unsafe_allow_html=True,
+    )
+
+    # 2. Suggested Prompt Chips (Direct AI Triggers)
     st.caption("⚡ **Click any prompt to run an autonomous request:**")
     h_c1, h_c2, h_c3, h_c4 = st.columns(4)
     with h_c1:
         if st.button("🔬 Lab for 30 students tomorrow 10-12", use_container_width=True, key="h_p1"):
             process_user_input("I need a computer lab for 30 students tomorrow from 10 AM to 12 PM for a Python practical")
+            st.session_state.current_page = "💬 AI Assistant"
             st.rerun()
     with h_c2:
         if st.button("📚 Room for 4 students tomorrow 2-4 PM", use_container_width=True, key="h_p2"):
             process_user_input("Find me a discussion room for 4 people tomorrow from 2 PM to 4 PM for group study")
+            st.session_state.current_page = "💬 AI Assistant"
             st.rerun()
     with h_c3:
         if st.button("🔍 Check AI Lab tomorrow 10-12", use_container_width=True, key="h_p3"):
             process_user_input("Check if AI Lab is available tomorrow from 10:00 to 12:00")
+            st.session_state.current_page = "💬 AI Assistant"
             st.rerun()
     with h_c4:
         if st.button("📋 Show my upcoming bookings", use_container_width=True, key="h_p4"):
             process_user_input(f"Show all my upcoming reservations for {user_id}")
+            st.session_state.current_page = "💬 AI Assistant"
             st.rerun()
 
     st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
 
-    # 3. Four Top Metric Cards
+    # 3. Four Student Metric Cards
+    my_all_res = get_all_student_reservations(student_id=user_id)
+    my_active = len([b for b in my_all_res if b.get("status") in ("confirmed", "approved")])
+    my_pending = len([b for b in my_all_res if b.get("status") == "pending"])
+    my_leaves = len(get_student_leave_requests(student_id=user_id))
+
     c_s1, c_s2, c_s3, c_s4 = st.columns(4)
     with c_s1:
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="stat-card">
                 <div class="stat-header">
-                    <span class="stat-label">Laboratories</span>
-                    <span class="stat-icon">🔬</span>
+                    <span class="stat-label">Active Bookings</span>
+                    <span class="stat-icon">📅</span>
                 </div>
-                <div class="stat-value">{len(labs)}</div>
-                <div class="stat-footer" style="color: #059669;">
-                    <span>● 3 Active</span> &bull; <span>105 Workstations</span>
+                <div class="stat-value">{my_active}</div>
+                <div class="stat-footer" style="color: #10B981;">
+                    <span>● Confirmed in SQLite</span>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
     with c_s2:
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="stat-card">
                 <div class="stat-header">
-                    <span class="stat-label">Discussion Rooms</span>
-                    <span class="stat-icon">📚</span>
+                    <span class="stat-label">Pending Approval</span>
+                    <span class="stat-icon">⏳</span>
                 </div>
-                <div class="stat-value">{len(rooms)}</div>
-                <div class="stat-footer" style="color: #2563eb;">
-                    <span>● 3 Available</span> &bull; <span>18 Collaborative Seats</span>
+                <div class="stat-value" style="color: {'#FF303A' if my_pending > 0 else '#FFFFFF'};">{my_pending}</div>
+                <div class="stat-footer" style="color: #F59E0B;">
+                    <span>● Under Review</span>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
     with c_s3:
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="stat-card">
                 <div class="stat-header">
-                    <span class="stat-label">Bookings Today</span>
-                    <span class="stat-icon">📅</span>
+                    <span class="stat-label">Approved Leaves</span>
+                    <span class="stat-icon">🏖️</span>
                 </div>
-                <div class="stat-value">{total_today_bookings}</div>
-                <div class="stat-footer" style="color: #7c3aed;">
-                    <span>● SQLite Confirmed</span> &bull; <span>{today_str}</span>
+                <div class="stat-value">{my_leaves}</div>
+                <div class="stat-footer" style="color: #10B981;">
+                    <span>● Auto-Accepted</span>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
     with c_s4:
         st.markdown(
-            """
+            clean_html(f"""
             <div class="stat-card">
                 <div class="stat-header">
-                    <span class="stat-label">AI Agent Engine</span>
+                    <span class="stat-label">AI Campus Assistant</span>
                     <span class="stat-icon">🤖</span>
                 </div>
                 <div class="stat-value">Online</div>
-                <div class="stat-footer" style="color: #059669;">
-                    <span>● Gemini 3.5 ReAct</span> &bull; <span>14 Tools</span>
+                <div class="stat-footer" style="color: #10B981;">
+                    <span>● Gemini-Powered</span>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
     st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
 
-    # 4. Main Balanced Workspace (Consistent Two-Column Layout)
-    col_agent_panel, col_side_panels = st.columns([1.5, 1], gap="large")
+    # 4. Balanced Two-Column Section
+    col_dash_left, col_dash_right = st.columns([1.4, 1], gap="large")
 
-    # LEFT COLUMN: Primary AI Assistant
-    with col_agent_panel:
+    with col_dash_left:
         st.markdown(
-            """
+            clean_html(f"""
             <div class="card-header-title">
-                <span>🤖 Autonomous Campus Assistant</span>
-                <span class="badge-live">Ready</span>
+                <span>📋 My Recent Reservations</span>
+                <span class="badge-profile-chip">{user_id}</span>
             </div>
-            <div class="card-header-sub">
-                Natural-language facility search, conflict checking, and instant reservation.
-            </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
-        # Conversation History Container
-        chat_container = st.container()
-        with chat_container:
-            for m_idx, msg in enumerate(st.session_state.messages):
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
-
-                    # Tool Execution Trace
-                    if msg.get("steps"):
-                        with st.expander(f"🛠️ Agent Execution Trace ({len(msg['steps'])} steps)", expanded=False):
-                            for idx, step in enumerate(msg["steps"], 1):
-                                tool_name = step.get("tool", "tool")
-                                obs = str(step.get("observation", ""))
-                                st.markdown(f"**Step {idx}: Executed Tool `{tool_name}`**")
-                                c_a, c_o = st.columns([1, 1])
-                                with c_a:
-                                    st.caption("Input Parameters:")
-                                    st.json(step.get("args", {}))
-                                with c_o:
-                                    st.caption("Database Observation:")
-                                    st.code(obs[:500] + ("..." if len(obs) > 500 else ""), language="text")
-
-                    # Interactive Facility Recommendation Cards
-                    if msg.get("recommendations"):
-                        st.markdown("##### 🎯 Recommended Facilities")
-                        for r_idx, rec in enumerate(msg["recommendations"]):
-                            badge_class = "rec-badge-best" if rec.get("match_badge") == "Best Match" else "rec-badge-alt"
-                            st.markdown(
-                                f"""
-                                <div class="rec-card">
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
-                                        <span style="font-weight: 800; font-size: 1.05rem; color: #0f172a;">{rec['facility_name']}</span>
-                                        <span class="{badge_class}">{rec.get('match_badge', 'Option')}</span>
-                                    </div>
-                                    <div style="font-size: 0.82rem; color: #64748b; margin-bottom: 0.35rem;">
-                                        📍 {rec.get('location')} &bull; 👥 Capacity: <b>{rec.get('capacity')}</b> &bull; ⏰ <b>{rec.get('start_time')} - {rec.get('end_time')}</b> ({rec.get('booking_date')})
-                                    </div>
-                                    <div style="font-size: 0.82rem; color: #334155;">
-                                        💡 <i>{rec.get('match_reason')}</i>
-                                    </div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-                            if rec.get("is_available") and rec.get("is_capacity_sufficient"):
-                                if st.button(f"👉 Select {rec['facility_name']} ({rec['start_time']} - {rec['end_time']})", key=f"dash_sel_{m_idx}_{r_idx}"):
-                                    st.session_state.pending_booking = {
-                                        "service_type": rec["facility_type"],
-                                        "item_id": rec["facility_id"],
-                                        "item_name": rec["facility_name"],
-                                        "lab_id": rec.get("lab_id"),
-                                        "room_id": rec.get("room_id"),
-                                        "booking_date": rec["booking_date"],
-                                        "start_time": rec["start_time"],
-                                        "end_time": rec["end_time"],
-                                        "student_id": user_id,
-                                        "student_name": student_name,
-                                    }
-                                    st.rerun()
-
-        # Human-in-the-Loop Confirmation Gate
-        if st.session_state.pending_booking:
-            pending = st.session_state.pending_booking
-            st.markdown(
-                f"""
-                <div class="booking-confirm-card">
-                    <div class="booking-confirm-header">
-                        <span>🛡️ Confirmation Required Before Booking</span>
-                    </div>
-                    <p style="color: #475569; font-size: 0.88rem; margin: 0 0 0.6rem 0;">
-                        The requested slot is 100% available in SQLite. Please verify before committing:
-                    </p>
-                    <div class="booking-details-grid">
-                        <div class="booking-item">
-                            <div class="booking-item-label">Facility</div>
-                            <div class="booking-item-value">{pending['item_name']}</div>
-                        </div>
-                        <div class="booking-item">
-                            <div class="booking-item-label">Date</div>
-                            <div class="booking-item-value">{pending['booking_date']}</div>
-                        </div>
-                        <div class="booking-item">
-                            <div class="booking-item-label">Time Slot</div>
-                            <div class="booking-item-value">{pending['start_time']} - {pending['end_time']}</div>
-                        </div>
-                        <div class="booking-item">
-                            <div class="booking-item-label">Student</div>
-                            <div class="booking-item-value">{student_name} ({user_id[:12]})</div>
-                        </div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            col_b1, col_b2 = st.columns(2)
-            with col_b1:
-                if st.button("✅ Confirm Booking", type="primary", use_container_width=True, key="dash_btn_confirm"):
-                    confirm_pending_booking()
-                    st.rerun()
-            with col_b2:
-                if st.button("❌ Cancel", use_container_width=True, key="dash_btn_cancel"):
-                    st.session_state.pending_booking = None
-                    st.rerun()
-
-        # Single Dedicated Chat Input
-        if dash_prompt := st.chat_input("Ask CampusPilot AI to book or search (e.g. 'Lab for 30 students tomorrow 10-12')..."):
-            process_user_input(dash_prompt)
-            st.rerun()
-
-    # RIGHT COLUMN: Upcoming Bookings & Quick Actions
-    with col_side_panels:
-        # Panel A: User-Specific Upcoming Bookings
-        st.markdown(
-            f"""
-            <div class="card-header-title">
-                <span>📅 Upcoming Bookings</span>
-                <span style="font-size: 0.78rem; font-weight: 600; color: #64748b;">{student_name}</span>
-            </div>
-            <div class="card-header-sub">
-                Verified reservations retrieved strictly for your student ID.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        my_reservations = get_all_student_reservations(student_id=user_id)
-        active_bookings = [r for r in my_reservations if r.get("status") == "confirmed"]
-
-        if active_bookings:
-            for r in active_bookings[:4]:
+        if my_all_res:
+            for b in my_all_res[:4]:
+                b_stat = b.get("status", "pending")
+                badge = "badge-live" if b_stat in ("confirmed", "approved") else ("badge-rejected" if b_stat == "rejected" else "badge-pending")
                 st.markdown(
-                    f"""
+                    clean_html(f"""
                     <div class="booking-row">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem;">
-                            <span style="font-weight: 700; font-size: 0.95rem; color: #0f172a;">{r['facility_name']}</span>
-                            <span class="badge-live">REF #{r['booking_id']}</span>
+                            <span style="font-weight: 700; font-size: 0.95rem;">{b['facility_name']}</span>
+                            <span class="{badge}">{b_stat.upper()} &bull; #{b['booking_id']}</span>
                         </div>
-                        <div style="font-size: 0.8rem; color: #64748b;">
-                            📅 {r['booking_date']} &bull; ⏰ {r['start_time']} - {r['end_time']}<br>
-                            📍 {r['location']}
+                        <div style="font-size: 0.82rem; color: #A1A1AA;">
+                            📅 {b['booking_date']} &bull; ⏰ {b['start_time']} - {b['end_time']}<br>
+                            🎯 <b>Purpose:</b> {b.get('purpose') or 'Academic Practical'}
                         </div>
                     </div>
-                    """,
+                    """),
                     unsafe_allow_html=True,
                 )
         else:
-            st.markdown(
-                f"""
-                <div class="empty-state-box">
-                    <div style="font-size: 1.6rem; margin-bottom: 0.3rem;">📋</div>
-                    <div style="font-weight: 700; color: #334155; font-size: 0.9rem;">No Active Bookings</div>
-                    <div style="font-size: 0.8rem; margin-top: 0.2rem;">
-                        You have no scheduled reservations. Use the AI Assistant to book a slot!
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            st.info("You have no reservations yet. Click below to book a lab or study room!")
 
-        st.markdown("<div style='height: 0.8rem;'></div>", unsafe_allow_html=True)
-
-        # Panel B: Quick Facility Navigation
+    with col_dash_right:
         st.markdown(
-            """
+            clean_html(f"""
             <div class="card-header-title">
                 <span>⚡ Quick Actions</span>
             </div>
-            <div class="card-header-sub">
-                Jump directly to dedicated reservation and catalog tools.
-            </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
-        qa_c1, qa_c2 = st.columns(2)
-        with qa_c1:
-            if st.button("🔬 Book Lab", use_container_width=True):
+        qa1, qa2 = st.columns(2)
+        with qa1:
+            if st.button("🔬 Book Lab", use_container_width=True, key="sd_qa_lab"):
                 st.session_state.current_page = "🔬 Lab Booking"
                 st.rerun()
-            if st.button("🏢 Facilities", use_container_width=True):
-                st.session_state.current_page = "🏢 Facilities"
+            if st.button("🏖️ Leave Request", use_container_width=True, key="sd_qa_leave"):
+                st.session_state.current_page = "🏖️ Leave Requests"
                 st.rerun()
-        with qa_c2:
-            if st.button("📚 Book Room", use_container_width=True):
+        with qa2:
+            if st.button("📚 Book Room", use_container_width=True, key="sd_qa_room"):
                 st.session_state.current_page = "📚 Discussion Rooms"
                 st.rerun()
-            if st.button("📋 My Bookings", use_container_width=True):
+            if st.button("📋 My Bookings", use_container_width=True, key="sd_qa_myb"):
                 st.session_state.current_page = "📋 My Bookings"
                 st.rerun()
 
-        st.markdown("<div style='height: 0.8rem;'></div>", unsafe_allow_html=True)
-
-        # Panel C: Campus Operations Guide
+        st.markdown("<div style='height: 0.6rem;'></div>", unsafe_allow_html=True)
         st.markdown(
-            """
-            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem; box-shadow: 0 1px 3px rgba(15,23,42,0.03);">
-                <div style="font-weight: 700; font-size: 0.88rem; color: #0f172a; margin-bottom: 0.4rem;">💡 How CampusPilot AI Works:</div>
-                <div style="font-size: 0.8rem; color: #475569; line-height: 1.5;">
-                    <b>1. Natural Request:</b> State your needs in plain English.<br>
-                    <b>2. Conflict Check:</b> AI queries SQLite to verify zero overlaps.<br>
-                    <b>3. Safety Gate:</b> Review summary and click Confirm to commit.<br>
-                    <b>4. Instant Ledger:</b> Booking reference is recorded in SQLite.
+            clean_html(f"""
+            <div class="content-card">
+                <div style="font-weight: 700; font-size: 0.88rem; margin-bottom: 0.4rem; color: #E50914;">💡 Booking Workflow Guide:</div>
+                <div style="font-size: 0.8rem; color: #A1A1AA; line-height: 1.5;">
+                    <b>1. Submit Request:</b> Select lab and state your purpose.<br>
+                    <b>2. Pending Status:</b> Awaits faculty admin review.<br>
+                    <b>3. Admin Approval:</b> Confirms slot or records reason.<br>
+                    <b>4. Instant Ledger:</b> Track live status in My Bookings.
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    # 5. Lower Dashboard Section: Facilities Overview
-    st.markdown("---")
-    st.markdown("#### 🏢 Campus Facilities At A Glance")
-    st.caption("Direct access to campus computing labs and library collaborative study spaces:")
-
-    fac_col1, fac_col2, fac_col3 = st.columns(3)
-    with fac_col1:
-        st.markdown(
-            """
-            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem;">
-                <div style="font-weight: 700; color: #0f172a; margin-bottom: 0.2rem;">🔬 Computer Lab 1 & AI Lab</div>
-                <div style="font-size: 0.8rem; color: #64748b;">40 & 30 Workstations &bull; High-performance GPUs & Ethernet</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with fac_col2:
-        st.markdown(
-            """
-            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem;">
-                <div style="font-weight: 700; color: #0f172a; margin-bottom: 0.2rem;">🔬 Networking Lab</div>
-                <div style="font-size: 0.8rem; color: #64748b;">35 Workstations &bull; Cisco Routers, Switches, Packet Tracer</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with fac_col3:
-        st.markdown(
-            """
-            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem;">
-                <div style="font-weight: 700; color: #0f172a; margin-bottom: 0.2rem;">📚 Discussion Rooms 1, 2 & 3</div>
-                <div style="font-size: 0.8rem; color: #64748b;">4 to 8 Seats &bull; Acoustic Panels, Whiteboards, HDMI Displays</div>
-            </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
 
-# ==============================================================================
-# VIEW 2: 💬 AI ASSISTANT (DEDICATED FULLSCREEN)
-# ==============================================================================
+# ------------------------------------------------------------------------------
+# SHARED VIEW: 💬 AI ASSISTANT
+# ------------------------------------------------------------------------------
 elif st.session_state.current_page == "💬 AI Assistant":
-    st.markdown(f"### 💬 CampusPilot Conversational Assistant ({student_name})")
-    st.caption("Describe your scheduling needs naturally. The agent extracts constraints, queries SQLite, ranks candidate venues, and presents interactive options.")
+    st.markdown(f"### 💬 Gemini-Powered AI Campus Assistant ({student_name})")
+    st.caption("Describe your scheduling needs naturally. The assistant extracts constraints, queries SQLite, ranks candidate venues, and presents interactive options.")
 
     # Suggested prompt pills
     st.markdown("**Suggested Prompts:**")
     ap_c1, ap_c2, ap_c3, ap_c4 = st.columns(4)
     with ap_c1:
-        if st.button("💻 Lab for 30 students tomorrow 10-12", use_container_width=True):
+        if st.button("💻 Lab for 30 students tomorrow 10-12", use_container_width=True, key="ap_p1"):
             process_user_input("I need a computer lab for 30 students tomorrow from 10 AM to 12 PM for a Python practical")
             st.rerun()
     with ap_c2:
-        if st.button("📚 Room for 4 students tomorrow 2-4 PM", use_container_width=True):
+        if st.button("📚 Room for 4 students tomorrow 2-4 PM", use_container_width=True, key="ap_p2"):
             process_user_input("Find me a discussion room for 4 people tomorrow from 2 PM to 4 PM for group study")
             st.rerun()
     with ap_c3:
-        if st.button("🔍 Check AI Lab Tomorrow 10-12", use_container_width=True):
+        if st.button("🔍 Check AI Lab Tomorrow 10-12", use_container_width=True, key="ap_p3"):
             process_user_input("Check if AI Lab is available tomorrow from 10:00 to 12:00")
             st.rerun()
     with ap_c4:
-        if st.button("📋 Show My Bookings", use_container_width=True):
+        if st.button("📋 Show My Bookings", use_container_width=True, key="ap_p4"):
             process_user_input(f"Show all my upcoming reservations for {user_id}")
             st.rerun()
 
@@ -1336,7 +1903,7 @@ elif st.session_state.current_page == "💬 AI Assistant":
 
             # Tool Execution Traces Expander
             if msg.get("steps"):
-                with st.expander(f"🛠️ Agent Execution Trace ({len(msg['steps'])} tool steps)", expanded=False):
+                with st.expander(f"🛠️ Execution Trace ({len(msg['steps'])} tool steps)", expanded=False):
                     for idx, step in enumerate(msg["steps"], 1):
                         tool_name = step.get("tool", "tool")
                         obs = str(step.get("observation", ""))
@@ -1355,20 +1922,20 @@ elif st.session_state.current_page == "💬 AI Assistant":
                 for r_idx, rec in enumerate(msg["recommendations"]):
                     badge_class = "rec-badge-best" if rec.get("match_badge") == "Best Match" else "rec-badge-alt"
                     st.markdown(
-                        f"""
+                        clean_html(f"""
                         <div class="rec-card">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                                <span style="font-weight: 800; font-size: 1.05rem; color: #0f172a;">{rec['facility_name']}</span>
+                                <span style="font-weight: 800; font-size: 1.05rem;">{rec['facility_name']}</span>
                                 <span class="{badge_class}">{rec.get('match_badge', 'Option')}</span>
                             </div>
-                            <div style="font-size: 0.84rem; color: #64748b; margin-bottom: 0.4rem;">
+                            <div style="font-size: 0.84rem; color: #A1A1AA; margin-bottom: 0.4rem;">
                                 📍 {rec.get('location')} &bull; 👥 Capacity: <b>{rec.get('capacity')}</b> &bull; ⏰ <b>{rec.get('start_time')} - {rec.get('end_time')}</b> ({rec.get('booking_date')})
                             </div>
-                            <div style="font-size: 0.84rem; color: #334155; margin-bottom: 0.75rem;">
+                            <div style="font-size: 0.84rem; color: #E50914; margin-bottom: 0.75rem;">
                                 💡 <i>{rec.get('match_reason')}</i>
                             </div>
                         </div>
-                        """,
+                        """),
                         unsafe_allow_html=True,
                     )
                     if rec.get("is_available") and rec.get("is_capacity_sufficient"):
@@ -1391,12 +1958,12 @@ elif st.session_state.current_page == "💬 AI Assistant":
     if st.session_state.pending_booking:
         pending = st.session_state.pending_booking
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="booking-confirm-card">
                 <div class="booking-confirm-header">
-                    <span>🛡️ Explicit Human Confirmation Required</span>
+                    <span>🛡️ Explicit Confirmation Required</span>
                 </div>
-                <p style="color: #475569; font-size: 0.9rem; margin: 0 0 1rem 0;">
+                <p style="font-size: 0.9rem; color: #A1A1AA; margin: 0 0 1rem 0;">
                     The slot is confirmed available in SQLite. Please review the reservation parameters before confirming:
                 </p>
                 <div class="booking-details-grid">
@@ -1413,12 +1980,12 @@ elif st.session_state.current_page == "💬 AI Assistant":
                         <div class="booking-item-value">{pending['start_time']} to {pending['end_time']}</div>
                     </div>
                     <div class="booking-item">
-                        <div class="booking-item-label">Student Details</div>
-                        <div class="booking-item-value">{student_name} ({user_id[:12]})</div>
+                        <div class="booking-item-label">Account Details</div>
+                        <div class="booking-item-value">{student_name} ({user_id})</div>
                     </div>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
@@ -1441,278 +2008,384 @@ elif st.session_state.current_page == "💬 AI Assistant":
         st.rerun()
 
 
-# ==============================================================================
-# VIEW 3: 🔬 LAB BOOKING
-# ==============================================================================
-elif st.session_state.current_page == "🔬 Lab Booking":
+# ------------------------------------------------------------------------------
+# STUDENT VIEW 2: 🔬 LAB BOOKING (SUBMITS AS PENDING ADMIN APPROVAL)
+# ------------------------------------------------------------------------------
+elif not is_admin and st.session_state.current_page == "🔬 Lab Booking":
     st.markdown(f"### 🔬 Campus Laboratory Reservation")
-    st.caption("Request a computer or engineering lab based on capacity, date and time. AI verifies zero conflicts before reserving:")
-
-    # Quick prompt trigger
-    st.markdown("**⚡ Quick AI Query:**")
-    if st.button("🤖 Ask AI to find the best available lab for 30 students tomorrow", use_container_width=True):
-        process_user_input("Find and recommend a computer lab for 30 students tomorrow from 10 AM to 12 PM")
-        st.session_state.current_page = "💬 AI Assistant"
-        st.rerun()
-
-    st.markdown("---")
+    st.caption("Request a computer or engineering lab based on capacity, date, and academic purpose. Submissions enter the administrator review queue:")
 
     col_form, col_display = st.columns([1.2, 1], gap="large")
 
     with col_form:
         st.markdown("#### 📅 Direct Slot Checker & Booking Form")
-        lab_options = {lab["lab_name"]: lab["lab_id"] for lab in labs}
-        selected_lab_name = st.selectbox("Select Laboratory", list(lab_options.keys()))
-        selected_lab_id = lab_options[selected_lab_name]
+        enabled_labs = [l for l in labs if l.get("is_enabled", 1) == 1]
+        if not enabled_labs:
+            st.error("All laboratory bookings are currently disabled by the administrator.")
+            lab_options = {}
+        else:
+            lab_options = {lab["lab_name"]: lab["lab_id"] for lab in enabled_labs}
 
-        col_d1, col_d2 = st.columns(2)
-        with col_d1:
-            pick_date = st.date_input("Booking Date", value=date.today() + timedelta(days=1))
-        with col_d2:
-            time_slots = [
-                ("09:00", "11:00"),
-                ("10:00", "12:00"),
-                ("11:00", "13:00"),
-                ("13:00", "15:00"),
-                ("14:00", "16:00"),
-                ("15:00", "17:00"),
-            ]
-            slot_labels = [f"{s} - {e}" for s, e in time_slots]
-            pick_slot = st.selectbox("Time Interval", slot_labels, index=1)
+        if lab_options:
+            selected_lab_name = st.selectbox("Select Laboratory", list(lab_options.keys()), key="lab_sel_box")
+            selected_lab_id = lab_options[selected_lab_name]
 
-        start_t, end_t = pick_slot.split(" - ")
-        date_str = pick_date.strftime("%Y-%m-%d")
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                pick_date = st.date_input("Booking Date", value=date.today() + timedelta(days=1), key="lab_date_pick")
+            with col_d2:
+                time_slots = [
+                    ("09:00", "11:00"),
+                    ("10:00", "12:00"),
+                    ("11:00", "13:00"),
+                    ("13:00", "15:00"),
+                    ("14:00", "16:00"),
+                    ("15:00", "17:00"),
+                ]
+                slot_labels = [f"{s} - {e}" for s, e in time_slots]
+                pick_slot = st.selectbox("Time Interval", slot_labels, index=1, key="lab_slot_pick")
 
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            if st.button("🔍 Check Availability", use_container_width=True):
-                with st.spinner("Checking SQLite database..."):
-                    check_res = check_lab_availability.invoke({
-                        "lab_id": selected_lab_id,
-                        "booking_date": date_str,
-                        "start_time": start_t,
-                        "end_time": end_t,
-                    })
-                    if "AVAILABLE:" in check_res:
-                        st.success(f"✅ Slot {start_t} - {end_t} on {date_str} is FREE for {selected_lab_name}!")
+            start_t, end_t = pick_slot.split(" - ")
+            date_str = pick_date.strftime("%Y-%m-%d")
+
+            # Purpose Field (Mandatory per Part 5)
+            lab_purpose = st.text_input(
+                "Purpose of Reservation *",
+                value="Final Year AI Project Model Training Practical",
+                placeholder="e.g. Machine Learning Practical, Cloud Computing Lab Session",
+                key="lab_purpose_input",
+            )
+
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button("🔍 Check Availability", use_container_width=True, key="btn_check_lab"):
+                    with st.spinner("Checking SQLite database..."):
+                        check_res = check_lab_availability.invoke({
+                            "lab_id": selected_lab_id,
+                            "booking_date": date_str,
+                            "start_time": start_t,
+                            "end_time": end_t,
+                        })
+                        if "AVAILABLE:" in check_res:
+                            st.success(f"✅ Slot {start_t} - {end_t} on {date_str} is FREE for {selected_lab_name}!")
+                        else:
+                            st.error(f"❌ Slot {start_t} - {end_t} on {date_str} is OCCUPIED.")
+
+            with col_btn2:
+                if st.button("⚡ Submit Booking Request", type="primary", use_container_width=True, key="btn_confirm_lab"):
+                    if not lab_purpose.strip():
+                        st.error("Please provide the purpose of your reservation.")
                     else:
-                        st.error(f"❌ Slot {start_t} - {end_t} on {date_str} is OCCUPIED.")
-
-        with col_btn2:
-            if st.button("⚡ Confirm Lab Reservation", type="primary", use_container_width=True):
-                with st.spinner("Booking laboratory in SQLite..."):
-                    book_res = create_lab_booking.invoke({
-                        "student_id": user_id,
-                        "student_name": student_name,
-                        "lab_id": selected_lab_id,
-                        "booking_date": date_str,
-                        "start_time": start_t,
-                        "end_time": end_t,
-                    })
-                    if "BOOKING CONFIRMED!" in book_res:
-                        st.success(f"🎉 Reservation Confirmed!\n{book_res}")
-                        if is_smtp_configured():
-                            send_booking_confirmation_email(
-                                recipient_email=student_email,
-                                recipient_name=student_name,
-                                facility_name=selected_lab_name,
-                                booking_date=date_str,
-                                start_time=start_t,
-                                end_time=end_t,
-                                booking_id=re.search(r"Booking ID:\s*(\d+)", book_res).group(1) if re.search(r"Booking ID:\s*(\d+)", book_res) else "CONFIRMED",
-                                facility_type="Campus Laboratory",
-                            )
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error(book_res)
+                        with st.spinner("Submitting booking request for admin approval..."):
+                            try:
+                                # Create booking with status='pending' awaiting admin review
+                                b_record = create_booking(
+                                    student_id=user_id,
+                                    student_name=student_name,
+                                    lab_id=selected_lab_id,
+                                    booking_date=date_str,
+                                    start_time=start_t,
+                                    end_time=end_t,
+                                    status="pending",
+                                    purpose=lab_purpose.strip(),
+                                )
+                                st.success(
+                                    f"🎉 Request #{b_record['booking_id']} Submitted! "
+                                    f"Status: **Pending Admin Approval**. You can track review status under **My Bookings**."
+                                )
+                                time.sleep(1.2)
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"Booking Error: {str(ex)}")
 
     with col_display:
-        st.markdown(f"#### 📋 Reservations on {date_str}")
-        bookings_on_date = get_bookings_by_date(date_str, lab_id=selected_lab_id)
-        if bookings_on_date:
-            for b in bookings_on_date:
-                st.markdown(
-                    f"""
-                    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.75rem 1rem; margin-bottom: 0.5rem;">
-                        <b>{b['start_time']} - {b['end_time']}</b> &bull; {b['student_name']} ({b['student_id']})<br>
-                        <span style="font-size: 0.78rem; color: #64748b;">Ref #{b['booking_id']} &bull; Status: {b['status']}</span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.info(f"No existing reservations for {selected_lab_name} on {date_str}. All slots are available!")
+        st.markdown(f"#### 📋 Reservations on {date_str if 'date_str' in locals() else today_str}")
+        if lab_options:
+            bookings_on_date = get_bookings_by_date(date_str, lab_id=selected_lab_id)
+            if bookings_on_date:
+                for b in bookings_on_date:
+                    st.markdown(
+                        clean_html(f"""
+                        <div class="booking-row">
+                            <b>{b['start_time']} - {b['end_time']}</b> &bull; {b['student_name']}<br>
+                            <span style="font-size: 0.78rem; color: #A1A1AA;">Ref #{b['booking_id']} &bull; Status: {b['status'].upper()}</span>
+                        </div>
+                        """),
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info(f"No existing reservations for {selected_lab_name} on {date_str}. All slots are available!")
 
 
-# ==============================================================================
-# VIEW 4: 📚 DISCUSSION ROOMS
-# ==============================================================================
-elif st.session_state.current_page == "📚 Discussion Rooms":
+# ------------------------------------------------------------------------------
+# STUDENT VIEW 3: 📚 DISCUSSION ROOMS
+# ------------------------------------------------------------------------------
+elif not is_admin and st.session_state.current_page == "📚 Discussion Rooms":
     st.markdown("### 📚 Library Discussion Rooms")
     st.caption("Reserve collaborative group study spaces equipped with whiteboards and digital displays:")
-
-    # Quick prompt trigger
-    st.markdown("**⚡ Quick AI Query:**")
-    if st.button("🤖 Ask AI to find a quiet discussion room for 4 people tomorrow", use_container_width=True):
-        process_user_input("Find me an available discussion room for 4 people tomorrow afternoon for group study")
-        st.session_state.current_page = "💬 AI Assistant"
-        st.rerun()
-
-    st.markdown("---")
 
     col_r_form, col_r_display = st.columns([1.2, 1], gap="large")
 
     with col_r_form:
         st.markdown("#### 📅 Discussion Room Reservation Form")
-        room_options = {room["room_name"]: room["room_id"] for room in rooms}
-        selected_room_name = st.selectbox("Select Discussion Room", list(room_options.keys()))
-        selected_room_id = room_options[selected_room_name]
+        enabled_rooms = [r for r in rooms if r.get("is_enabled", 1) == 1]
+        if not enabled_rooms:
+            st.error("All discussion rooms are currently disabled by the administrator.")
+            room_options = {}
+        else:
+            room_options = {room["room_name"]: room["room_id"] for room in enabled_rooms}
 
-        col_rd1, col_rd2 = st.columns(2)
-        with col_rd1:
-            pick_room_date = st.date_input("Reservation Date", value=date.today() + timedelta(days=1), key="room_date_in")
-        with col_rd2:
-            time_slots = [
-                ("09:00", "11:00"),
-                ("10:00", "12:00"),
-                ("11:00", "13:00"),
-                ("13:00", "15:00"),
-                ("14:00", "16:00"),
-                ("15:00", "17:00"),
-            ]
-            slot_labels = [f"{s} - {e}" for s, e in time_slots]
-            pick_room_slot = st.selectbox("Time Interval", slot_labels, index=2, key="room_slot_in")
+        if room_options:
+            selected_room_name = st.selectbox("Select Discussion Room", list(room_options.keys()), key="room_sel_box")
+            selected_room_id = room_options[selected_room_name]
 
-        start_rt, end_rt = pick_room_slot.split(" - ")
-        room_date_str = pick_room_date.strftime("%Y-%m-%d")
+            col_rd1, col_rd2 = st.columns(2)
+            with col_rd1:
+                pick_room_date = st.date_input("Reservation Date", value=date.today() + timedelta(days=1), key="room_date_in")
+            with col_rd2:
+                time_slots = [
+                    ("09:00", "11:00"),
+                    ("10:00", "12:00"),
+                    ("11:00", "13:00"),
+                    ("13:00", "15:00"),
+                    ("14:00", "16:00"),
+                    ("15:00", "17:00"),
+                ]
+                slot_labels = [f"{s} - {e}" for s, e in time_slots]
+                pick_room_slot = st.selectbox("Time Interval", slot_labels, index=2, key="room_slot_in")
 
-        col_rbtn1, col_rbtn2 = st.columns(2)
-        with col_rbtn1:
-            if st.button("🔍 Check Room Availability", use_container_width=True):
-                with st.spinner("Checking SQLite database..."):
-                    check_room_res = check_room_availability.invoke({
-                        "room_id": selected_room_id,
-                        "booking_date": room_date_str,
-                        "start_time": start_rt,
-                        "end_time": end_rt,
-                    })
-                    if "AVAILABLE:" in check_room_res:
-                        st.success(f"✅ Slot {start_rt} - {end_rt} on {room_date_str} is FREE for {selected_room_name}!")
-                    else:
-                        st.error(f"❌ Slot {start_rt} - {end_rt} on {room_date_str} is OCCUPIED.")
+            start_rt, end_rt = pick_room_slot.split(" - ")
+            room_date_str = pick_room_date.strftime("%Y-%m-%d")
 
-        with col_rbtn2:
-            if st.button("⚡ Confirm Room Reservation", type="primary", use_container_width=True):
-                with st.spinner("Reserving room in SQLite..."):
-                    res_room = create_room_reservation.invoke({
-                        "student_id": user_id,
-                        "student_name": student_name,
-                        "room_id": selected_room_id,
-                        "booking_date": room_date_str,
-                        "start_time": start_rt,
-                        "end_time": end_rt,
-                    })
-                    if "DISCUSSION ROOM RESERVED!" in res_room:
-                        st.success(f"🎉 Room Reserved Successfully!\n{res_room}")
-                        if is_smtp_configured():
-                            send_booking_confirmation_email(
-                                recipient_email=student_email,
-                                recipient_name=student_name,
-                                facility_name=selected_room_name,
+            room_purpose = st.text_input(
+                "Purpose of Discussion / Study *",
+                value="Capstone Project Group Brainstorming & Architecture Design",
+                key="room_purpose_in",
+            )
+
+            col_rbtn1, col_rbtn2 = st.columns(2)
+            with col_rbtn1:
+                if st.button("🔍 Check Room Availability", use_container_width=True, key="btn_check_room"):
+                    with st.spinner("Checking SQLite database..."):
+                        check_room_res = check_room_availability.invoke({
+                            "room_id": selected_room_id,
+                            "booking_date": room_date_str,
+                            "start_time": start_rt,
+                            "end_time": end_rt,
+                        })
+                        if "AVAILABLE:" in check_room_res:
+                            st.success(f"✅ Slot {start_rt} - {end_rt} on {room_date_str} is FREE for {selected_room_name}!")
+                        else:
+                            st.error(f"❌ Slot {start_rt} - {end_rt} on {room_date_str} is OCCUPIED.")
+
+            with col_rbtn2:
+                if st.button("⚡ Reserve Discussion Room", type="primary", use_container_width=True, key="btn_confirm_room"):
+                    with st.spinner("Reserving room in SQLite..."):
+                        try:
+                            # Rooms can be confirmed directly
+                            rb_rec = create_room_booking(
+                                student_id=user_id,
+                                student_name=student_name,
+                                room_id=selected_room_id,
                                 booking_date=room_date_str,
                                 start_time=start_rt,
                                 end_time=end_rt,
-                                booking_id=re.search(r"Booking ID:\s*(\d+)", res_room).group(1) if re.search(r"Booking ID:\s*(\d+)", res_room) else "CONFIRMED",
-                                facility_type="Library Discussion Room",
+                                status="confirmed",
+                                purpose=room_purpose.strip(),
                             )
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error(res_room)
+                            st.success(f"🎉 Discussion Room Reserved! Reference #{rb_rec['booking_id']}")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"Reservation Error: {str(ex)}")
 
     with col_r_display:
-        st.markdown(f"#### 📋 Reservations on {room_date_str}")
-        r_bookings = get_room_bookings_by_date(room_date_str, room_id=selected_room_id)
-        if r_bookings:
-            for rb in r_bookings:
-                st.markdown(
-                    f"""
-                    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.75rem 1rem; margin-bottom: 0.5rem;">
-                        <b>{rb['start_time']} - {rb['end_time']}</b> &bull; {rb['student_name']} ({rb['student_id']})<br>
-                        <span style="font-size: 0.78rem; color: #64748b;">Ref #{rb['booking_id']} &bull; Status: {rb['status']}</span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.info(f"No existing reservations for {selected_room_name} on {room_date_str}. All slots are available!")
+        st.markdown(f"#### 📋 Reservations on {room_date_str if 'room_date_str' in locals() else today_str}")
+        if room_options:
+            r_bookings = get_room_bookings_by_date(room_date_str, room_id=selected_room_id)
+            if r_bookings:
+                for rb in r_bookings:
+                    st.markdown(
+                        clean_html(f"""
+                        <div class="booking-row">
+                            <b>{rb['start_time']} - {rb['end_time']}</b> &bull; {rb['student_name']}<br>
+                            <span style="font-size: 0.78rem; color: #A1A1AA;">Ref #{rb['booking_id']} &bull; Status: {rb['status'].upper()}</span>
+                        </div>
+                        """),
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info(f"No existing reservations for {selected_room_name} on {room_date_str}. All slots are available!")
 
 
-# ==============================================================================
-# VIEW 5: 📋 MY BOOKINGS (USER-SPECIFIC ISOLATION)
-# ==============================================================================
-elif st.session_state.current_page == "📋 My Bookings":
+# ------------------------------------------------------------------------------
+# STUDENT VIEW 4: 📋 MY BOOKINGS (PENDING, APPROVED, REJECTED + REASONS)
+# ------------------------------------------------------------------------------
+elif not is_admin and st.session_state.current_page == "📋 My Bookings":
     st.markdown(f"### 📋 Reservations for {student_name} ({user_id})")
     st.caption("Review, track, and manage all your campus laboratory and discussion room reservations:")
 
     # Strictly isolated query for authenticated user's ID
     my_all_res = get_all_student_reservations(student_id=user_id)
 
-    tab_all, tab_labs, tab_rooms = st.tabs(["All Bookings", "🔬 Laboratories", "📚 Discussion Rooms"])
+    tab_all, tab_pending, tab_approved, tab_rejected, tab_cancelled = st.tabs([
+        "All My Bookings",
+        "⏳ Pending Approval",
+        "✅ Approved",
+        "❌ Rejected",
+        "🚫 Cancelled",
+    ])
 
-    def render_booking_list(bookings, filter_type=None):
-        if filter_type:
-            bookings = [b for b in bookings if filter_type.lower() in b.get("service_type", "").lower()]
+    def render_student_booking_list(filter_status=None, tab_id="all"):
+        bookings = my_all_res
+        if filter_status:
+            if filter_status == "approved":
+                bookings = [b for b in bookings if b.get("status") in ("approved", "confirmed")]
+            else:
+                bookings = [b for b in bookings if b.get("status") == filter_status]
 
         if not bookings:
-            st.info(f"No bookings found for {student_name} in this category.")
+            st.info(f"No bookings found in category: {filter_status or 'All'}.")
             return
 
         for b in bookings:
-            status_color = "#047857" if b.get("status") == "confirmed" else "#64748b"
-            status_bg = "#ecfdf5" if b.get("status") == "confirmed" else "#f1f5f9"
-            status_border = "#a7f3d0" if b.get("status") == "confirmed" else "#e2e8f0"
+            cur_stat = b.get("status", "pending")
+            status_badge = "badge-live" if cur_stat in ("approved", "confirmed") else ("badge-rejected" if cur_stat == "rejected" else "badge-pending")
+            b_id = b["booking_id"]
+            s_type = b["service_type"]
 
-            c_info, c_action = st.columns([4, 1])
+            c_info, c_action = st.columns([4, 1.2])
             with c_info:
+                rejection_html = ""
+                if cur_stat == "rejected" and b.get("rejection_reason"):
+                    rejection_html = f"""<div class="rejection-box"><b>Administrator Feedback:</b> {b['rejection_reason']}</div>"""
+
                 st.markdown(
-                    f"""
-                    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 0.7rem; box-shadow: 0 1px 3px rgba(15,23,42,0.03);">
+                    clean_html(f"""
+                    <div class="content-card" style="margin-bottom: 0.7rem;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                            <span style="font-weight: 800; font-size: 1.05rem; color: #0f172a;">{b['facility_name']} <span style="font-size: 0.8rem; font-weight: 500; color: #64748b;">({b['service_type']})</span></span>
-                            <span style="background: {status_bg}; color: {status_color}; font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.65rem; border-radius: 9999px; border: 1px solid {status_border};">
-                                REF #{b['booking_id']} &bull; {b['status'].upper()}
-                            </span>
+                            <span style="font-weight: 800; font-size: 1.05rem;">{b['facility_name']} <span style="font-size: 0.8rem; color: #A1A1AA;">({s_type})</span></span>
+                            <span class="{status_badge}">REF #{b_id} &bull; {cur_stat.upper()}</span>
                         </div>
-                        <div style="font-size: 0.84rem; color: #64748b;">
-                            📅 <b>{b['booking_date']}</b> &bull; ⏰ <b>{b['start_time']} - {b['end_time']}</b> &bull; 📍 {b['location']}
+                        <div style="font-size: 0.84rem; color: #A1A1AA; line-height: 1.5;">
+                            📅 <b>{b['booking_date']}</b> &bull; ⏰ <b>{b['start_time']} - {b['end_time']}</b> &bull; 📍 {b['location']}<br>
+                            🎯 <b>Purpose:</b> <i>{b.get('purpose') or 'Academic Practical'}</i>
                         </div>
+                        {rejection_html}
                     </div>
-                    """,
+                    """),
                     unsafe_allow_html=True,
                 )
             with c_action:
-                if b.get("status") == "confirmed":
-                    if st.button("Cancel Booking", key=f"cancel_{b['service_type']}_{b['booking_id']}", use_container_width=True):
-                        success = cancel_reservation(b["booking_id"], b["service_type"])
+                if cur_stat in ("confirmed", "approved", "pending"):
+                    btn_key = f"cancel_{tab_id}_{s_type.replace(' ', '_')}_{b_id}"
+                    if st.button("Cancel Booking", key=btn_key, use_container_width=True):
+                        success = cancel_reservation(b_id, s_type)
                         if success:
-                            st.success(f"Booking #{b['booking_id']} cancelled.")
-                            time.sleep(0.5)
+                            st.success(f"Booking #{b_id} cancelled.")
+                            time.sleep(0.4)
                             st.rerun()
 
     with tab_all:
-        render_booking_list(my_all_res)
-    with tab_labs:
-        render_booking_list(my_all_res, "Laboratory")
-    with tab_rooms:
-        render_booking_list(my_all_res, "Library Room")
+        render_student_booking_list(filter_status=None, tab_id="all")
+    with tab_pending:
+        render_student_booking_list(filter_status="pending", tab_id="pending")
+    with tab_approved:
+        render_student_booking_list(filter_status="approved", tab_id="approved")
+    with tab_rejected:
+        render_student_booking_list(filter_status="rejected", tab_id="rejected")
+    with tab_cancelled:
+        render_student_booking_list(filter_status="cancelled", tab_id="cancelled")
 
 
-# ==============================================================================
-# VIEW 6: 🏢 FACILITIES CATALOG
-# ==============================================================================
-elif st.session_state.current_page == "🏢 Facilities":
+# ------------------------------------------------------------------------------
+# STUDENT VIEW 5: 🏖️ LEAVE REQUESTS (AUTOMATIC ACCEPTANCE RULE)
+# ------------------------------------------------------------------------------
+elif not is_admin and st.session_state.current_page == "🏖️ Leave Requests":
+    st.markdown("### 🏖️ Student Academic & Medical Leave Requests")
+    st.caption("Submit leave requests evaluated under the automated university campus leave policy:")
+
+    col_lform, col_lhistory = st.columns([1.2, 1], gap="large")
+
+    with col_lform:
+        st.markdown("#### 📝 New Leave Application")
+        leave_type = st.selectbox(
+            "Leave Category *",
+            [
+                "Medical / Sick Leave",
+                "Academic / Conference Leave",
+                "On-Duty / Project Work Leave",
+                "Personal / Family Emergency",
+            ],
+            key="leave_type_select",
+        )
+
+        c_ld1, c_ld2 = st.columns(2)
+        with c_ld1:
+            l_start = st.date_input("Start Date *", value=date.today() + timedelta(days=1), key="leave_start_date")
+        with c_ld2:
+            l_end = st.date_input("End Date *", value=date.today() + timedelta(days=2), key="leave_end_date")
+
+        leave_reason = st.text_area(
+            "Reason / Justification *",
+            placeholder="e.g. Attending the IEEE Student Conference on AI and Robotics in New Delhi",
+            key="leave_reason_text",
+        )
+
+        if st.button("🚀 Submit Leave Request", type="primary", use_container_width=True, key="btn_submit_leave"):
+            if not leave_reason.strip():
+                st.error("Please provide a reason for the leave request.")
+            elif l_start > l_end:
+                st.error("Start date cannot be after end date.")
+            else:
+                with st.spinner("Applying university leave policy..."):
+                    try:
+                        l_rec = create_leave_request(
+                            student_id=user_id,
+                            student_name=student_name,
+                            student_email=student_email,
+                            leave_type=leave_type,
+                            start_date=l_start.strftime("%Y-%m-%d"),
+                            end_date=l_end.strftime("%Y-%m-%d"),
+                            reason=leave_reason.strip(),
+                        )
+                        st.success(
+                            f"🎉 Leave Request Approved! Reference #{l_rec['leave_id']}. "
+                            f"Policy Decision: **{l_rec['status']}**."
+                        )
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Leave Submission Error: {str(ex)}")
+
+    with col_lhistory:
+        st.markdown("#### 📋 My Leave Records")
+        my_leaves = get_student_leave_requests(student_id=user_id)
+        if my_leaves:
+            for l in my_leaves:
+                st.markdown(
+                    clean_html(f"""
+                    <div class="content-card" style="margin-bottom: 0.6rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                            <span style="font-weight: 700; font-size: 0.95rem;">{l['leave_type']}</span>
+                            <span class="badge-live">{l['status']}</span>
+                        </div>
+                        <div style="font-size: 0.82rem; color: #A1A1AA;">
+                            📅 {l['start_date']} to {l['end_date']}<br>
+                            📝 <i>{l['reason']}</i>
+                        </div>
+                    </div>
+                    """),
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("No past leave requests found.")
+
+
+# ------------------------------------------------------------------------------
+# STUDENT VIEW 6: 🏢 FACILITIES CATALOG
+# ------------------------------------------------------------------------------
+elif not is_admin and st.session_state.current_page == "🏢 Facilities":
     st.markdown("### 🏢 Campus Facilities Directory")
     st.caption("Explore verified specifications, workstation capacities, and installed hardware/software across campus venues:")
 
@@ -1721,29 +2394,31 @@ elif st.session_state.current_page == "🏢 Facilities":
     cols = [l_c1, l_c2, l_c3]
     for idx, lab in enumerate(labs):
         details = get_facility_details_by_id("lab", lab["lab_id"]) or {}
+        is_en = bool(lab.get("is_enabled", 1))
         with cols[idx % 3]:
             st.markdown(
-                f"""
-                <div style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 14px; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 2px 6px rgba(15,23,42,0.03);">
+                clean_html(f"""
+                <div class="content-card" style="margin-bottom: 1rem;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                        <span style="font-weight: 800; font-size: 1.1rem; color: #0f172a;">{lab['lab_name']}</span>
-                        <span style="background: #eff6ff; color: #1d4ed8; font-size: 0.72rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 9999px;">Lab #{lab['lab_id']}</span>
+                        <span style="font-weight: 800; font-size: 1.1rem;">{lab['lab_name']}</span>
+                        <span class="{'badge-live' if is_en else 'badge-offline'}">{'ACTIVE' if is_en else 'MAINTENANCE'}</span>
                     </div>
-                    <div style="font-size: 0.85rem; color: #64748b; margin-bottom: 0.6rem;">
+                    <div style="font-size: 0.85rem; color: #A1A1AA; margin-bottom: 0.6rem;">
                         📍 {lab['location']}<br>
                         👥 Capacity: <b>{lab['capacity']} Workstations</b>
                     </div>
-                    <div style="font-size: 0.78rem; color: #334155; margin-bottom: 0.9rem;">
+                    <div style="font-size: 0.78rem; color: #E50914; margin-bottom: 0.9rem;">
                         <b>Amenities & Specs:</b><br>
                         • {"<br>• ".join(details.get("equipment", ["Standard Workstations", "Gigabit LAN"]))}
                     </div>
                 </div>
-                """,
+                """),
                 unsafe_allow_html=True,
             )
-            if st.button(f"⚡ Book {lab['lab_name']}", key=f"fac_book_lab_{lab['lab_id']}", use_container_width=True):
-                st.session_state.current_page = "🔬 Lab Booking"
-                st.rerun()
+            if is_en:
+                if st.button(f"⚡ Book {lab['lab_name']}", key=f"fac_book_lab_{lab['lab_id']}", use_container_width=True):
+                    st.session_state.current_page = "🔬 Lab Booking"
+                    st.rerun()
 
     st.markdown("---")
     st.markdown("#### 📚 Library Discussion Rooms")
@@ -1751,113 +2426,36 @@ elif st.session_state.current_page == "🏢 Facilities":
     r_cols = [r_c1, r_c2, r_c3]
     for idx, room in enumerate(rooms):
         details = get_facility_details_by_id("room", room["room_id"]) or {}
+        is_ren = bool(room.get("is_enabled", 1))
         with r_cols[idx % 3]:
             st.markdown(
-                f"""
-                <div style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 14px; padding: 1.25rem; margin-bottom: 1rem; box-shadow: 0 2px 6px rgba(15,23,42,0.03);">
+                clean_html(f"""
+                <div class="content-card" style="margin-bottom: 1rem;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                        <span style="font-weight: 800; font-size: 1.1rem; color: #0f172a;">{room['room_name']}</span>
-                        <span style="background: #f5f3ff; color: #6d28d9; font-size: 0.72rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 9999px;">Room #{room['room_id']}</span>
+                        <span style="font-weight: 800; font-size: 1.1rem;">{room['room_name']}</span>
+                        <span class="{'badge-live' if is_ren else 'badge-offline'}">{'ACTIVE' if is_ren else 'MAINTENANCE'}</span>
                     </div>
-                    <div style="font-size: 0.85rem; color: #64748b; margin-bottom: 0.6rem;">
+                    <div style="font-size: 0.85rem; color: #A1A1AA; margin-bottom: 0.6rem;">
                         📍 {room['location']}<br>
                         👥 Capacity: <b>{room['capacity']} Seats</b>
                     </div>
-                    <div style="font-size: 0.78rem; color: #334155; margin-bottom: 0.9rem;">
+                    <div style="font-size: 0.78rem; color: #E50914; margin-bottom: 0.9rem;">
                         <b>Amenities & Specs:</b><br>
                         • {"<br>• ".join(details.get("equipment", ["Whiteboard", "High-speed Wi-Fi"]))}
                     </div>
                 </div>
-                """,
+                """),
                 unsafe_allow_html=True,
             )
-            if st.button(f"⚡ Book {room['room_name']}", key=f"fac_book_room_{room['room_id']}", use_container_width=True):
-                st.session_state.current_page = "📚 Discussion Rooms"
-                st.rerun()
+            if is_ren:
+                if st.button(f"⚡ Book {room['room_name']}", key=f"fac_book_room_{room['room_id']}", use_container_width=True):
+                    st.session_state.current_page = "📚 Discussion Rooms"
+                    st.rerun()
 
 
-# ==============================================================================
-# VIEW 7: 📈 ANALYTICS
-# ==============================================================================
-elif st.session_state.current_page == "📈 Analytics":
-    st.markdown("### 📈 Campus Resource Analytics & Utilization")
-    st.caption("Real-time utilization metrics and scheduling statistics computed directly from the SQLite database:")
-
-    # Summary Metrics
-    an_c1, an_c2, an_c3, an_c4 = st.columns(4)
-    all_student_res = get_all_student_reservations(student_id=user_id)
-    with an_c1:
-        st.markdown(
-            f"""
-            <div class="stat-card">
-                <div class="stat-label">Total Facilities</div>
-                <div class="stat-value">{len(labs) + len(rooms)}</div>
-                <div class="stat-footer" style="color: #059669;">3 Labs + 3 Rooms</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with an_c2:
-        st.markdown(
-            f"""
-            <div class="stat-card">
-                <div class="stat-label">Workstations & Seats</div>
-                <div class="stat-value">123</div>
-                <div class="stat-footer" style="color: #2563eb;">105 Labs &bull; 18 Study Seats</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with an_c3:
-        st.markdown(
-            f"""
-            <div class="stat-card">
-                <div class="stat-label">Bookings Today</div>
-                <div class="stat-value">{total_today_bookings}</div>
-                <div class="stat-footer" style="color: #7c3aed;">On {today_str}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with an_c4:
-        st.markdown(
-            f"""
-            <div class="stat-card">
-                <div class="stat-label">Your Reservations</div>
-                <div class="stat-value">{len(all_student_res)}</div>
-                <div class="stat-footer" style="color: #059669;">{len([b for b in all_student_res if b.get('status') == 'confirmed'])} Confirmed Active</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("---")
-
-    # Native Streamlit Charts
-    c_ch1, c_ch2 = st.columns(2)
-    with c_ch1:
-        st.markdown("##### 📊 Facility Capacity Distribution")
-        cap_data = {lab["lab_name"]: lab["capacity"] for lab in labs}
-        for room in rooms:
-            cap_data[room["room_name"]] = room["capacity"]
-        st.bar_chart(cap_data)
-
-    with c_ch2:
-        st.markdown("##### ⏰ Typical Peak Booking Hours (Workstations in Use)")
-        hour_data = {
-            "09:00 - 11:00": 30,
-            "10:00 - 12:00": 65,
-            "11:00 - 13:00": 45,
-            "13:00 - 15:00": 40,
-            "14:00 - 16:00": 70,
-            "15:00 - 17:00": 55,
-        }
-        st.bar_chart(hour_data)
-
-
-# ==============================================================================
-# VIEW 8: ⚙️ SETTINGS & DIAGNOSTICS
-# ==============================================================================
+# ------------------------------------------------------------------------------
+# SHARED VIEW: ⚙️ SETTINGS & DIAGNOSTICS
+# ------------------------------------------------------------------------------
 elif st.session_state.current_page == "⚙️ Settings":
     st.markdown(f"### ⚙️ System Settings & Diagnostics ({student_name})")
     st.caption("Configure notifications, update profile details, and review backend runtime parameters:")
@@ -1865,56 +2463,72 @@ elif st.session_state.current_page == "⚙️ Settings":
     col_set1, col_set2 = st.columns(2, gap="large")
 
     with col_set1:
-        st.markdown("#### 👤 Student Profile Information")
+        st.markdown("#### 👤 Account Profile Information")
         with st.form("form_edit_profile"):
-            edit_name = st.text_input("Full Name", value=raw_name if raw_name else "")
-            st.text_input("Student User ID", value=user_id, disabled=True)
-            st.text_input("Registered Email", value=student_email, disabled=True)
-            edit_dept = st.text_input("Department", value=department)
+            edit_name = st.text_input("Full Name", value=raw_name if raw_name else "", key="edit_prof_name")
+            st.text_input("Account Identifier / Student ID", value=user_id, disabled=True, key="edit_prof_id")
+            st.text_input("Account Role / Type", value=account_type, disabled=True, key="edit_prof_role")
+            st.text_input("Registered Email", value=student_email, disabled=True, key="edit_prof_email")
+            st.text_input("Institution", value=university_name, disabled=True, key="edit_prof_univ")
+            edit_dept = st.text_input("Department", value=department, key="edit_prof_dept")
             save_prof_btn = st.form_submit_button("Update Profile Details", type="primary")
 
             if save_prof_btn:
                 upsert_student_profile(
-                    user_id=user_id,
+                    user_id=auth_user.get("user_id", user_id),
                     full_name=edit_name.strip(),
                     email=student_email,
                     department=edit_dept.strip(),
                 )
                 if st.session_state.authenticated_user:
                     st.session_state.authenticated_user["full_name"] = edit_name.strip()
+                    st.session_state.authenticated_user["display_name"] = edit_name.strip()
                     st.session_state.authenticated_user["department"] = edit_dept.strip()
                 st.success("Profile details updated successfully!")
                 time.sleep(0.5)
                 st.rerun()
 
         st.markdown("#### 🔔 Notification Preferences")
-        st.checkbox("Email confirmation after booking", value=True)
-        st.checkbox("Calendar invitation attachment (.ics)", value=True)
-        st.checkbox("SMS reminder 30 minutes before slot", value=False)
+        st.checkbox("Email confirmation after booking", value=True, key="notif_email")
+        st.checkbox("Calendar invitation attachment (.ics)", value=True, key="notif_ics")
 
     with col_set2:
+        st.markdown("#### 🎨 Theme & Appearance")
+        chosen_theme = st.radio(
+            "Select Interface Theme",
+            ["🌙 Dark Mode (Black & Red)", "☀️ Light Mode"],
+            index=0 if st.session_state.theme == "dark" else 1,
+            key="settings_theme_radio",
+            horizontal=True,
+        )
+        new_theme = "dark" if "Dark" in chosen_theme else "light"
+        if new_theme != st.session_state.theme:
+            st.session_state.theme = new_theme
+            st.rerun()
+
         st.markdown("#### 🖥️ System Health & Diagnostics")
-        st.caption("Technical infrastructure metrics (kept away from the main student dashboard):")
+        st.caption("Technical infrastructure metrics:")
         st.markdown(
-            f"""
-            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.15rem; font-size: 0.88rem;">
+            clean_html(f"""
+            <div class="content-card" style="font-size: 0.88rem;">
                 <p style="margin-bottom: 0.4rem;"><b>User ID:</b> <code>{user_id}</code></p>
-                <p style="margin-bottom: 0.4rem;"><b>Student Name:</b> <code>{student_name}</code></p>
+                <p style="margin-bottom: 0.4rem;"><b>Active Identity:</b> <code>{student_name}</code> ({account_type})</p>
                 <p style="margin-bottom: 0.4rem;"><b>FastAPI Backend:</b> <code>{BACKEND_URL}</code> ({'ONLINE' if backend_online else 'OFFLINE'})</p>
                 <p style="margin-bottom: 0.4rem;"><b>Database Store:</b> <code>data/campus.db</code> (SQLite)</p>
-                <p style="margin-bottom: 0.4rem;"><b>Gemini Model:</b> <code>gemini-3.5-flash-lite</code></p>
+                <p style="margin-bottom: 0.4rem;"><b>AI Engine:</b> <code>Gemini-Powered AI Campus Assistant</code></p>
                 <p style="margin-bottom: 0.4rem;"><b>Timezone:</b> <code>Asia/Kolkata (IST)</code></p>
+                <p style="margin-bottom: 0.4rem;"><b>Theme Mode:</b> <code>{'DARK MODE (Black & Red #080808)' if st.session_state.theme == 'dark' else 'LIGHT MODE'}</code></p>
                 <p style="margin-bottom: 0.4rem;"><b>Email Dispatch:</b> <code>{'Gmail SMTP Active' if is_smtp_configured() else 'Simulated / Ready'}</code></p>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
         st.markdown("<div style='height: 0.6rem;'></div>", unsafe_allow_html=True)
-        if st.button("🔄 Test Backend Connection Now", use_container_width=True):
-            with st.spinner("Pinging FastAPI..."):
-                health = check_backend_health()
-                if health:
-                    st.success("✅ Backend is responsive and operational!")
-                else:
-                    st.error("❌ Unable to connect to backend on port 8000.")
+        if st.button("🚪 Sign Out of CampusPilot", type="secondary", use_container_width=True, key="settings_logout_btn"):
+            st.session_state.authenticated_user = None
+            st.session_state.current_page = None
+            st.session_state.messages = []
+            st.session_state.langchain_history = []
+            st.session_state.pending_booking = None
+            st.rerun()
