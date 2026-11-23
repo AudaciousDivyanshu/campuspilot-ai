@@ -1,9 +1,9 @@
 """CampusPilot AI — Premium Campus Management Platform & Autonomous AI Assistant.
 
 A university productivity platform for multi-step campus facility workflows:
-- Visual Design System: Premium Black & Red Theme (#080808 / #111111 / #171717 / #151515 / #E50914) with Light Mode support.
-- Streamlined Authentication: Email/Password login, student registration with Student ID & Department,
-  removal of student demo shortcuts, and dedicated Faculty/Administrator access.
+- Visual Design System: Permanent Single White/Light Theme (#F8FAFC / #FFFFFF / #E50914) with soft shadows and crisp typography.
+- Streamlined Authentication: Email/Password login, student registration with Student ID & Department.
+  No demo shortcut buttons on the login page; authorized administrators sign in securely with their credentials.
 - Role-Based Experience:
   * Student: Personalized Dashboard, AI Assistant, Lab Booking (pending admin approval), Discussion Rooms,
     My Bookings (tracking pending/approved/rejected with rejection reasons), and Leave Requests (auto-accepted).
@@ -67,6 +67,7 @@ from app.database.operations import (
     recommend_matching_facilities,
     reject_booking,
     toggle_facility_status,
+    update_leave_status,
     upsert_student_profile,
 )
 from app.services.demo_auth import (
@@ -104,9 +105,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Application Theme: Dark-Mode-First Black & Red (#080808 & #E50914) with Clean Light Mode Support
-if "theme" not in st.session_state:
-    st.session_state.theme = "dark"
+# Application Theme: Permanent Single White / Light Theme Only
+st.session_state.theme = "light"
 
 if "authenticated_user" not in st.session_state:
     st.session_state.authenticated_user = None
@@ -149,25 +149,22 @@ def clean_html(html_str: str) -> str:
 
 
 # ==============================================================================
-# PREMIUM BLACK & RED THEME STYLING SYSTEM
+# PERMANENT SINGLE WHITE / LIGHT THEME STYLING SYSTEM
 # ==============================================================================
-def inject_theme_css(theme: str = "dark"):
-    is_dark = theme == "dark"
+def inject_theme_css():
+    bg_color = "#F8FAFC"
+    card_bg = "#FFFFFF"
+    secondary_card_bg = "#F8FAFC"
+    input_bg = "#FFFFFF"
+    text_primary = "#0F172A"
+    text_secondary = "#64748B"
+    border_color = "#E2E8F0"
+    hover_bg = "#F1F5F9"
+    placeholder_color = "#94A3B8"
 
-    # Strictly specified Black & Red Theme
-    bg_color = "#080808" if is_dark else "#F8FAFC"
-    card_bg = "#111111" if is_dark else "#FFFFFF"
-    secondary_card_bg = "#171717" if is_dark else "#F1F5F9"
-    input_bg = "#151515" if is_dark else "#FFFFFF"
-    text_primary = "#FFFFFF" if is_dark else "#09090B"
-    text_secondary = "#A1A1AA" if is_dark else "#52525B"
-    border_color = "#292929" if is_dark else "#E4E4E7"
-    hover_bg = "#1F1F1F" if is_dark else "#F4F4F5"
-    placeholder_color = "#71717A" if is_dark else "#A1A1AA"
-
-    # Primary crimson accent (#E50914) and hover (#FF303A)
+    # Refined Crimson Accent
     accent_crimson = "#E50914"
-    accent_crimson_hover = "#FF303A"
+    accent_crimson_hover = "#DC2626"
 
     css = f"""
     <style>
@@ -204,9 +201,9 @@ def inject_theme_css(theme: str = "dark"):
         margin: 0 auto !important;
     }}
 
-    /* Sleek Obsidian Sidebar */
+    /* Polished White Sidebar */
     section[data-testid="stSidebar"] {{
-        background: {'#0A0A0A' if is_dark else '#FFFFFF'} !important;
+        background: #FFFFFF !important;
         border-right: 1px solid {border_color} !important;
     }}
     section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p,
@@ -224,7 +221,7 @@ def inject_theme_css(theme: str = "dark"):
         background: {card_bg};
         border: 1px solid {border_color};
         border-radius: 14px;
-        box-shadow: {'0 4px 16px rgba(0,0,0,0.5)' if is_dark else '0 1px 3px rgba(15, 23, 42, 0.04)'};
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
         margin-bottom: 1.1rem;
     }}
 
@@ -250,59 +247,59 @@ def inject_theme_css(theme: str = "dark"):
         display: inline-flex;
         align-items: center;
         gap: 0.35rem;
-        background: rgba(16, 185, 129, 0.15);
-        color: #10B981;
+        background: rgba(16, 185, 129, 0.1);
+        color: #059669;
         padding: 0.25rem 0.65rem;
         border-radius: 9999px;
         font-size: 0.75rem;
         font-weight: 700;
-        border: 1px solid rgba(16, 185, 129, 0.35);
+        border: 1px solid rgba(16, 185, 129, 0.3);
     }}
 
     .badge-offline {{
         display: inline-flex;
         align-items: center;
         gap: 0.35rem;
-        background: rgba(229, 9, 20, 0.15);
-        color: #FF303A;
+        background: rgba(229, 9, 20, 0.1);
+        color: #DC2626;
         padding: 0.25rem 0.65rem;
         border-radius: 9999px;
         font-size: 0.75rem;
         font-weight: 700;
-        border: 1px solid rgba(229, 9, 20, 0.35);
+        border: 1px solid rgba(229, 9, 20, 0.3);
     }}
 
     .badge-pending {{
         display: inline-flex;
         align-items: center;
         gap: 0.35rem;
-        background: rgba(245, 158, 11, 0.15);
-        color: #F59E0B;
+        background: rgba(245, 158, 11, 0.12);
+        color: #D97706;
         padding: 0.25rem 0.65rem;
         border-radius: 9999px;
         font-size: 0.75rem;
         font-weight: 700;
-        border: 1px solid rgba(245, 158, 11, 0.35);
+        border: 1px solid rgba(245, 158, 11, 0.3);
     }}
 
     .badge-rejected {{
         display: inline-flex;
         align-items: center;
         gap: 0.35rem;
-        background: rgba(229, 9, 20, 0.15);
-        color: #FF303A;
+        background: rgba(229, 9, 20, 0.1);
+        color: #DC2626;
         padding: 0.25rem 0.65rem;
         border-radius: 9999px;
         font-size: 0.75rem;
         font-weight: 700;
-        border: 1px solid rgba(229, 9, 20, 0.35);
+        border: 1px solid rgba(229, 9, 20, 0.3);
     }}
 
     .badge-profile-chip {{
         display: inline-flex;
         align-items: center;
         gap: 0.4rem;
-        background: {hover_bg};
+        background: #F1F5F9;
         color: {text_primary};
         padding: 0.25rem 0.75rem;
         border-radius: 9999px;
@@ -313,12 +310,12 @@ def inject_theme_css(theme: str = "dark"):
 
     /* Hero Banner */
     .hero-banner {{
-        background: {'linear-gradient(135deg, #171717 0%, #0F0F0F 100%)' if is_dark else 'linear-gradient(135deg, #F8FAFC 0%, #FFFFFF 100%)'};
+        background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);
         border: 1px solid {border_color};
         border-left: 4px solid {accent_crimson};
         border-radius: 14px;
         padding: 1.35rem 1.6rem;
-        box-shadow: {'0 6px 20px rgba(0, 0, 0, 0.4)' if is_dark else '0 2px 8px rgba(0, 0, 0, 0.05)'};
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
         margin-bottom: 1.15rem;
     }}
 
@@ -344,7 +341,7 @@ def inject_theme_css(theme: str = "dark"):
         border: 1px solid {border_color};
         border-radius: 14px;
         padding: 1rem 1.15rem;
-        box-shadow: {'0 2px 8px rgba(0,0,0,0.3)' if is_dark else '0 1px 3px rgba(15, 23, 42, 0.04)'};
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
         margin-bottom: 1rem;
         transition: transform 0.15s ease, border-color 0.15s ease;
     }}
@@ -352,7 +349,7 @@ def inject_theme_css(theme: str = "dark"):
     .stat-card:hover {{
         transform: translateY(-2px);
         border-color: {accent_crimson};
-        box-shadow: {'0 6px 18px rgba(229, 9, 20, 0.18)' if is_dark else '0 6px 14px rgba(229, 9, 20, 0.1)'};
+        box-shadow: 0 4px 12px rgba(229, 9, 20, 0.08);
     }}
 
     .stat-header {{
@@ -396,7 +393,7 @@ def inject_theme_css(theme: str = "dark"):
         border: 1px solid {border_color};
         border-radius: 14px;
         padding: 1.35rem;
-        box-shadow: {'0 4px 16px rgba(0,0,0,0.35)' if is_dark else '0 1px 3px rgba(15, 23, 42, 0.04)'};
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
         margin-bottom: 1rem;
     }}
 
@@ -429,13 +426,13 @@ def inject_theme_css(theme: str = "dark"):
 
     .rec-card:hover {{
         border-color: {accent_crimson};
-        box-shadow: 0 4px 14px rgba(229, 9, 20, 0.2);
+        box-shadow: 0 4px 12px rgba(229, 9, 20, 0.08);
     }}
 
     .rec-badge-best {{
-        background: rgba(229, 9, 20, 0.15);
-        color: #FF303A;
-        border: 1px solid rgba(229, 9, 20, 0.35);
+        background: rgba(229, 9, 20, 0.1);
+        color: #DC2626;
+        border: 1px solid rgba(229, 9, 20, 0.3);
         font-size: 0.72rem;
         font-weight: 800;
         padding: 0.2rem 0.6rem;
@@ -454,18 +451,18 @@ def inject_theme_css(theme: str = "dark"):
 
     /* Booking Confirmation Alert Card */
     .booking-confirm-card {{
-        background: {secondary_card_bg};
+        background: #FFF5F5;
         border: 2px solid {accent_crimson};
         border-radius: 14px;
         padding: 1.25rem;
         margin: 1rem 0;
-        box-shadow: 0 6px 20px rgba(229, 9, 20, 0.25);
+        box-shadow: 0 4px 14px rgba(229, 9, 20, 0.12);
     }}
 
     .booking-confirm-header {{
         font-size: 1.05rem;
         font-weight: 800;
-        color: #FF303A;
+        color: #DC2626;
         margin-bottom: 0.4rem;
         display: flex;
         align-items: center;
@@ -509,19 +506,19 @@ def inject_theme_css(theme: str = "dark"):
         border-radius: 10px;
         padding: 0.85rem 1rem;
         margin-bottom: 0.65rem;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
     }}
 
     /* Rejection reason callout box */
     .rejection-box {{
-        background: rgba(229, 9, 20, 0.08);
-        border: 1px solid rgba(229, 9, 20, 0.35);
+        background: rgba(229, 9, 20, 0.05);
+        border: 1px solid rgba(229, 9, 20, 0.25);
         border-left: 3px solid {accent_crimson};
         border-radius: 8px;
         padding: 0.6rem 0.85rem;
         margin-top: 0.5rem;
         font-size: 0.8rem;
-        color: #FF6B6B;
+        color: #B91C1C;
     }}
 
     /* Empty state */
@@ -534,7 +531,7 @@ def inject_theme_css(theme: str = "dark"):
         color: {text_secondary};
     }}
 
-    /* Streamlit Tabs (High Contrast, Clearly Distinguishable) */
+    /* Streamlit Tabs (High Contrast White Mode) */
     button[data-testid="stTab"] {{
         color: {text_secondary} !important;
         font-weight: 600 !important;
@@ -548,7 +545,7 @@ def inject_theme_css(theme: str = "dark"):
         color: {text_primary} !important;
     }}
     button[data-testid="stTab"][aria-selected="true"] {{
-        color: #FF303A !important;
+        color: {accent_crimson} !important;
         border-bottom: 2.5px solid {accent_crimson} !important;
         font-weight: 800 !important;
     }}
@@ -564,21 +561,21 @@ def inject_theme_css(theme: str = "dark"):
         font-weight: 600 !important;
         font-size: 0.88rem !important;
         transition: all 0.2s ease !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05) !important;
     }}
     div.stButton > button:hover,
     button[data-testid="baseButton-secondary"]:hover {{
         background-color: {hover_bg} !important;
-        color: #FF303A !important;
+        color: {accent_crimson} !important;
         border-color: {accent_crimson} !important;
         transform: translateY(-1px) !important;
-        box-shadow: 0 4px 12px rgba(229, 9, 20, 0.2) !important;
+        box-shadow: 0 4px 12px rgba(229, 9, 20, 0.12) !important;
     }}
 
     /* Primary Submit Button (Crimson Gradient #E50914) */
     div.stButton > button[kind="primary"],
     button[data-testid="baseButton-primary"] {{
-        background: linear-gradient(135deg, {accent_crimson} 0%, #B7000B 100%) !important;
+        background: linear-gradient(135deg, {accent_crimson} 0%, #C62828 100%) !important;
         color: #FFFFFF !important;
         border: none !important;
         border-radius: 10px !important;
@@ -586,7 +583,7 @@ def inject_theme_css(theme: str = "dark"):
         font-weight: 700 !important;
         font-size: 0.95rem !important;
         letter-spacing: 0.01em !important;
-        box-shadow: 0 4px 14px rgba(229, 9, 20, 0.4) !important;
+        box-shadow: 0 4px 14px rgba(229, 9, 20, 0.3) !important;
         transition: all 0.2s ease !important;
     }}
     div.stButton > button[kind="primary"]:hover,
@@ -594,7 +591,7 @@ def inject_theme_css(theme: str = "dark"):
         background: linear-gradient(135deg, {accent_crimson_hover} 0%, {accent_crimson} 100%) !important;
         color: #FFFFFF !important;
         transform: translateY(-1px) !important;
-        box-shadow: 0 6px 18px rgba(229, 9, 20, 0.55) !important;
+        box-shadow: 0 6px 18px rgba(229, 9, 20, 0.45) !important;
     }}
 
     /* Form Labels & Text Inputs */
@@ -620,7 +617,7 @@ def inject_theme_css(theme: str = "dark"):
     }}
     div[data-baseweb="input"]:focus-within {{
         border-color: {accent_crimson} !important;
-        box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.25) !important;
+        box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.15) !important;
     }}
     div[data-baseweb="input"] input,
     div[data-baseweb="textarea"] textarea {{
@@ -654,7 +651,7 @@ def inject_theme_css(theme: str = "dark"):
     st.markdown(clean_html(css), unsafe_allow_html=True)
 
 
-inject_theme_css(st.session_state.theme)
+inject_theme_css()
 
 # ==============================================================================
 # HELPERS & SINGLETONS
@@ -674,19 +671,9 @@ def get_agent():
 
 
 # ==============================================================================
-# SAAS TWO-COLUMN AUTHENTICATION EXPERIENCE (BLACK & RED THEME)
+# SAAS TWO-COLUMN AUTHENTICATION EXPERIENCE (SINGLE WHITE THEME)
 # ==============================================================================
 if st.session_state.authenticated_user is None:
-    is_dark = st.session_state.theme == "dark"
-
-    # Top Header Bar with Theme Switcher
-    c_top_l, c_top_theme = st.columns([8.2, 1.8])
-    with c_top_theme:
-        theme_label = "☀️ Switch to Light" if is_dark else "🌙 Switch to Dark"
-        if st.button(theme_label, key="toggle_theme_auth_btn", use_container_width=True):
-            st.session_state.theme = "light" if is_dark else "dark"
-            st.rerun()
-
     # Main Two-Column Layout
     col_left_brand, col_right_auth = st.columns([1.05, 1.25], gap="large")
 
@@ -698,8 +685,8 @@ if st.session_state.authenticated_user is None:
         st.markdown(
             clean_html(f"""
             <div style="display: flex; gap: 0.6rem; align-items: center; margin-bottom: 1.1rem; flex-wrap: wrap;">
-                <span style="background: rgba(229, 9, 20, 0.15); color: #FF303A; border: 1px solid rgba(229, 9, 20, 0.35); font-size: 0.72rem; font-weight: 700; padding: 0.25rem 0.75rem; border-radius: 9999px; letter-spacing: 0.03em;">● Academic Operations 2026</span>
-                <span style="color: {'#A1A1AA' if is_dark else '#64748B'}; font-size: 0.75rem; font-weight: 600;">v2.5 Production</span>
+                <span style="background: rgba(229, 9, 20, 0.08); color: #DC2626; border: 1px solid rgba(229, 9, 20, 0.25); font-size: 0.72rem; font-weight: 700; padding: 0.25rem 0.75rem; border-radius: 9999px; letter-spacing: 0.03em;">● Academic Operations 2026</span>
+                <span style="color: #64748B; font-size: 0.75rem; font-weight: 600;">v2.5 Production</span>
             </div>
             """),
             unsafe_allow_html=True,
@@ -711,12 +698,12 @@ if st.session_state.authenticated_user is None:
             <div style="margin-bottom: 1.2rem;">
                 <div style="display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.3rem;">
                     <span style="font-size: 2.2rem; line-height: 1;">🎓</span>
-                    <span style="font-size: 1.85rem; font-weight: 800; color: {'#FFFFFF' if is_dark else '#09090B'}; letter-spacing: -0.02em;">CampusPilot AI</span>
+                    <span style="font-size: 1.85rem; font-weight: 800; color: #0F172A; letter-spacing: -0.02em;">CampusPilot AI</span>
                 </div>
                 <div style="font-size: 0.95rem; font-weight: 700; color: #E50914; margin-bottom: 0.5rem; letter-spacing: -0.01em;">
                     Smart Campus Facility & Operations Platform
                 </div>
-                <p style="font-size: 0.88rem; color: {'#A1A1AA' if is_dark else '#475569'}; line-height: 1.55; margin: 0;">
+                <p style="font-size: 0.88rem; color: #475569; line-height: 1.55; margin: 0;">
                     CampusPilot AI connects students and faculty administrators with real-time availability across university computer laboratories, specialized engineering suites, and collaborative study rooms.
                 </p>
             </div>
@@ -727,44 +714,44 @@ if st.session_state.authenticated_user is None:
         # Key Features Box
         st.markdown(
             clean_html(f"""
-            <div style="background: {'#111111' if is_dark else '#FFFFFF'}; border: 1px solid {'#292929' if is_dark else '#E4E4E7'}; border-radius: 14px; padding: 1.15rem; margin-bottom: 1rem; box-shadow: {'0 4px 14px rgba(0,0,0,0.3)' if is_dark else '0 2px 8px rgba(15,23,42,0.04)'};">
+            <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 14px; padding: 1.15rem; margin-bottom: 1rem; box-shadow: 0 2px 8px rgba(15,23,42,0.04);">
                 <div style="font-size: 0.75rem; font-weight: 800; color: #E50914; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.85rem;">
                     Core Platform Capabilities
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 0.85rem;">
                     <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(229, 9, 20, 0.15); color: #E50914; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">⚡</span>
+                        <span style="background: rgba(229, 9, 20, 0.08); color: #E50914; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">⚡</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Real-time Lab & Room Availability</div>
-                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Live workstation counts and automated schedule conflict checking across all campus zones.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Real-time Lab & Room Availability</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Live workstation counts and automated schedule conflict checking across all campus zones.</div>
                         </div>
                     </div>
                     <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(16,185,129,0.15); color: #10B981; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">📅</span>
+                        <span style="background: rgba(16,185,129,0.1); color: #059669; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">📅</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Smart Booking Management</div>
-                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Zero double-booking guarantee with automated slot verification and instant confirmation ID receipts.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Smart Booking Management</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Zero double-booking guarantee with automated slot verification and instant confirmation ID receipts.</div>
                         </div>
                     </div>
                     <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(229, 9, 20, 0.15); color: #FF303A; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🤖</span>
+                        <span style="background: rgba(229, 9, 20, 0.08); color: #DC2626; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🤖</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Gemini AI Campus Assistant</div>
-                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Autonomous natural language request parsing for equipment specs, capacity, and smart recommendations.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Gemini AI Campus Assistant</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Autonomous natural language request parsing for equipment specs, capacity, and smart recommendations.</div>
                         </div>
                     </div>
                     <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(245,158,11,0.15); color: #F59E0B; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🛡️</span>
+                        <span style="background: rgba(245,158,11,0.1); color: #D97706; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🛡️</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Role-Based Access Control</div>
-                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Dedicated Student workflows and Faculty/Administrator approval & facility override panels.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Role-Based Access Control</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Dedicated Student workflows and Faculty/Administrator approval & facility override panels.</div>
                         </div>
                     </div>
                     <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(16,185,129,0.15); color: #10B981; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🏖️</span>
+                        <span style="background: rgba(16,185,129,0.1); color: #059669; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🏖️</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: {'#FFFFFF' if is_dark else '#09090B'};">Automated Student Leave Policy</div>
-                            <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; line-height: 1.4;">Instant rule-based auto-acceptance for academic & medical leaves with full admin oversight.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Automated Student Leave Policy</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Instant rule-based auto-acceptance for academic & medical leaves with full admin oversight.</div>
                         </div>
                     </div>
                 </div>
@@ -776,8 +763,8 @@ if st.session_state.authenticated_user is None:
         # Subtle Bottom Endorsement Card
         st.markdown(
             clean_html(f"""
-            <div style="background: {'#171717' if is_dark else '#F1F5F9'}; border: 1px dashed {'#292929' if is_dark else '#CBD5E1'}; border-radius: 12px; padding: 0.85rem 1rem;">
-                <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; display: flex; align-items: center; gap: 0.5rem; line-height: 1.45;">
+            <div style="background: #F1F5F9; border: 1px dashed #CBD5E1; border-radius: 12px; padding: 0.85rem 1rem;">
+                <div style="font-size: 0.78rem; color: #64748B; display: flex; align-items: center; gap: 0.5rem; line-height: 1.45;">
                     <span style="font-size: 1.05rem;">✨</span>
                     <span>Trusted by university academic departments, computing laboratories, and student study centers across campus.</span>
                 </div>
@@ -793,94 +780,162 @@ if st.session_state.authenticated_user is None:
         tab_signin, tab_create = st.tabs(["🔐 Sign In", "📝 Create Account"])
 
         # ======================================================================
-        # TAB 1: SIGN IN
+        # TAB 1: SIGN IN (SECURE PORTAL SELECTOR: STUDENT & ADMINISTRATOR)
         # ======================================================================
         with tab_signin:
-            st.markdown(
-                clean_html(f"""
-                <div style="margin-top: 0.35rem; margin-bottom: 1.1rem;">
-                    <h2 style="font-size: 1.35rem; font-weight: 800; color: {'#FFFFFF' if is_dark else '#09090B'}; margin: 0 0 0.25rem 0;">
-                        🔐 Welcome Back
-                    </h2>
-                    <p style="font-size: 0.84rem; color: {'#A1A1AA' if is_dark else '#64748B'}; margin: 0;">
-                        Sign in with your university credentials to enter your dashboard:
-                    </p>
-                </div>
-                """),
-                unsafe_allow_html=True,
+            # Segmented portal selector
+            portal_mode = st.radio(
+                "Access Mode",
+                ["👨‍🎓 Student Portal", "🛡️ Administrator Portal"],
+                horizontal=True,
+                key="auth_portal_mode",
+                label_visibility="collapsed",
             )
 
-            # Email Input
-            login_email = st.text_input(
-                "University Email",
-                value="arnav@campus.edu",
-                placeholder="e.g. arnav@campus.edu or student@lpu.in",
-                key="signin_email_input",
-            )
-
-            # Password Input with Toggle
-            col_pwd_fld, col_pwd_chk = st.columns([3.4, 1.6])
-            with col_pwd_chk:
-                show_pwd = st.checkbox("Show password", key="signin_show_pwd")
-            with col_pwd_fld:
-                login_password = st.text_input(
-                    "Password",
-                    value="Password123",
-                    type="text" if show_pwd else "password",
-                    placeholder="Enter your account password",
-                    key="signin_pwd_input",
-                )
-
-            # Remember Me and Default Password Hint
-            c_rem, c_hint = st.columns([1, 1.2])
-            with c_rem:
-                st.checkbox("Remember me", value=True, key="signin_rem_me")
-            with c_hint:
+            if portal_mode == "👨‍🎓 Student Portal":
                 st.markdown(
                     clean_html(f"""
-                    <div style="text-align: right; font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; padding-top: 0.35rem;">
-                        🔒 Default Demo: <code style="color: #FF303A; background: {'#151515' if is_dark else '#F1F5F9'}; padding: 2px 6px; border-radius: 4px; border: 1px solid {'#292929' if is_dark else '#CBD5E1'}; font-weight: 600;">Password123</code>
+                    <div style="margin-top: 0.35rem; margin-bottom: 0.9rem;">
+                        <h2 style="font-size: 1.3rem; font-weight: 800; color: #0F172A; margin: 0 0 0.2rem 0;">
+                            👨‍🎓 Student Sign In
+                        </h2>
+                        <p style="font-size: 0.84rem; color: #64748B; margin: 0;">
+                            Sign in with your university student email to access lab bookings and AI tools:
+                        </p>
                     </div>
                     """),
                     unsafe_allow_html=True,
                 )
 
-            # Full-Width Crimson Sign In Button
-            btn_signin = st.button("⚡ Sign In to CampusPilot", type="primary", use_container_width=True, key="btn_signin_submit")
+                # Email Input
+                login_email = st.text_input(
+                    "University Student Email",
+                    value="arnav@campus.edu",
+                    placeholder="e.g. arnav@campus.edu or your.email@university.edu",
+                    key="signin_student_email_input",
+                )
 
-            if btn_signin:
-                with st.spinner("Authenticating credentials..."):
-                    success, res = authenticate_user(login_email, login_password)
-                    if success:
-                        st.session_state.authenticated_user = res
-                        st.session_state.current_page = None  # Reset page to role default
-                        st.success(f"Welcome, {res.get('display_name') or res.get('full_name')}!")
-                        time.sleep(0.3)
-                        st.rerun()
+                # Password Input with Toggle
+                col_pwd_fld, col_pwd_chk = st.columns([3.4, 1.6])
+                with col_pwd_chk:
+                    show_pwd = st.checkbox("Show password", key="signin_student_show_pwd")
+                with col_pwd_fld:
+                    login_password = st.text_input(
+                        "Student Password",
+                        value="Password123",
+                        type="default" if show_pwd else "password",
+                        placeholder="Enter your student password",
+                        key="signin_student_pwd_input",
+                    )
+
+                # Remember Me
+                c_rem, c_hint = st.columns([1, 1.2])
+                with c_rem:
+                    st.checkbox("Remember me", value=True, key="signin_student_rem_me")
+                with c_hint:
+                    st.markdown(
+                        clean_html(f"""
+                        <div style="text-align: right; font-size: 0.78rem; color: #64748B; padding-top: 0.35rem;">
+                            🔒 Student University Access
+                        </div>
+                        """),
+                        unsafe_allow_html=True,
+                    )
+
+                # Full-Width Crimson Sign In Button
+                btn_signin = st.button("⚡ Sign In to Student Portal", type="primary", use_container_width=True, key="btn_signin_student_submit")
+
+                if btn_signin:
+                    if not login_email.strip() or not login_password:
+                        st.error("Please enter both university email and password.")
                     else:
-                        st.error(res)
+                        with st.spinner("Authenticating student credentials..."):
+                            success, res = authenticate_user(login_email, login_password)
+                            if success:
+                                st.session_state.authenticated_user = res
+                                st.session_state.current_page = "📊 Student Dashboard"
+                                st.success(f"Welcome, {res.get('display_name') or res.get('full_name')}!")
+                                time.sleep(0.3)
+                                st.rerun()
+                            else:
+                                st.error(res)
 
-            # Dedicated Faculty / Administrator Access Portal
-            # (Student demo buttons strictly removed per prompt requirements!)
-            st.markdown(
-                clean_html(f"""
-                <div style="background: {'#171717' if is_dark else '#F8FAFC'}; border: 1px solid {'#292929' if is_dark else '#E2E8F0'}; border-radius: 12px; padding: 0.95rem; margin-top: 1.4rem;">
-                    <div style="font-size: 0.86rem; font-weight: 800; color: #E50914; display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.2rem;">
-                        <span>🛡️</span> Faculty & Administrator Demonstration Portal
+            else:
+                # ------------------------------------------------------------------
+                # ADMINISTRATOR PORTAL (SECURE FACULTY ACCESS)
+                # ------------------------------------------------------------------
+                st.markdown(
+                    clean_html(f"""
+                    <div style="margin-top: 0.35rem; margin-bottom: 0.9rem;">
+                        <h2 style="font-size: 1.3rem; font-weight: 800; color: #0F172A; margin: 0 0 0.2rem 0;">
+                            🛡️ Institutional Administrator Sign In
+                        </h2>
+                        <p style="font-size: 0.84rem; color: #64748B; margin: 0;">
+                            Authorized faculty & campus administrators only. Institutional verification enforced:
+                        </p>
                     </div>
-                    <div style="font-size: 0.78rem; color: {'#A1A1AA' if is_dark else '#64748B'}; margin-bottom: 0.75rem; line-height: 1.4;">
-                        College faculty and evaluators can instantly authenticate to review pending student requests, test approvals, and manage campus facilities.
-                    </div>
-                </div>
-                """),
-                unsafe_allow_html=True,
-            )
+                    """),
+                    unsafe_allow_html=True,
+                )
 
-            if st.button("🛡️ Log In as Faculty Administrator (Dr. Sharma)", key="btn_quick_admin", use_container_width=True):
-                _, u = authenticate_user("admin@campus.edu", "AdminPass123")
-                st.session_state.authenticated_user = u
-                st.session_state.current_page = None
-                st.rerun()
+                admin_default_email = os.getenv("ADMIN_EMAIL", "admin@campus.edu")
+                admin_email = st.text_input(
+                    "Administrator Email",
+                    value=admin_default_email,
+                    placeholder="e.g. admin@campus.edu or faculty@university.edu",
+                    key="signin_admin_email_input",
+                )
+
+                col_pwd_fld, col_pwd_chk = st.columns([3.4, 1.6])
+                with col_pwd_chk:
+                    show_admin_pwd = st.checkbox("Show password", key="signin_admin_show_pwd")
+                with col_pwd_fld:
+                    admin_password = st.text_input(
+                        "Administrator Password",
+                        value="",
+                        type="default" if show_admin_pwd else "password",
+                        placeholder="Enter administrator password",
+                        key="signin_admin_pwd_input",
+                    )
+
+                c_rem_adm, c_hint_adm = st.columns([1, 1.2])
+                with c_rem_adm:
+                    st.checkbox("Remember session", value=True, key="signin_admin_rem_me")
+                with c_hint_adm:
+                    st.markdown(
+                        clean_html(f"""
+                        <div style="text-align: right; font-size: 0.78rem; color: #64748B; padding-top: 0.35rem;">
+                            🛡️ Institutional Administrator Access
+                        </div>
+                        """),
+                        unsafe_allow_html=True,
+                    )
+
+                btn_admin_signin = st.button("🛡️ Sign In as Administrator", type="primary", use_container_width=True, key="btn_signin_admin_submit")
+
+                if btn_admin_signin:
+                    if not admin_email.strip() or not admin_password:
+                        st.error("Please enter both administrator email and password.")
+                    else:
+                        with st.spinner("Verifying institutional administrator privileges..."):
+                            try:
+                                success, res = authenticate_user(admin_email, admin_password, required_role="Administrator")
+                            except TypeError:
+                                success, res = authenticate_user(admin_email, admin_password)
+                                if success and res.get("account_type") != "Administrator":
+                                    success = False
+                                    res = "⛔ Access Denied: This account does not possess institutional administrator privileges."
+                            if success:
+                                if res.get("account_type") != "Administrator":
+                                    st.error("⛔ Access Denied: This account does not possess institutional administrator privileges. Please sign in via the Student Portal.")
+                                else:
+                                    st.session_state.authenticated_user = res
+                                    st.session_state.current_page = "🛡️ Admin Dashboard"
+                                    st.success(f"Welcome, Administrator {res.get('display_name') or res.get('full_name')}!")
+                                    time.sleep(0.3)
+                                    st.rerun()
+                            else:
+                                st.error(res)
 
         # ======================================================================
         # TAB 2: CREATE ACCOUNT (STUDENT REGISTRATION ONLY)
@@ -889,10 +944,10 @@ if st.session_state.authenticated_user is None:
             st.markdown(
                 clean_html(f"""
                 <div style="margin-top: 0.35rem; margin-bottom: 1.1rem;">
-                    <h2 style="font-size: 1.35rem; font-weight: 800; color: {'#FFFFFF' if is_dark else '#09090B'}; margin: 0 0 0.25rem 0;">
+                    <h2 style="font-size: 1.35rem; font-weight: 800; color: #0F172A; margin: 0 0 0.25rem 0;">
                         📝 Register Student Account
                     </h2>
-                    <p style="font-size: 0.84rem; color: {'#A1A1AA' if is_dark else '#64748B'}; margin: 0;">
+                    <p style="font-size: 0.84rem; color: #64748B; margin: 0;">
                         Create your verified student profile to book labs, study rooms, and submit leave requests:
                     </p>
                 </div>
@@ -940,14 +995,14 @@ if st.session_state.authenticated_user is None:
             with c_pwd1:
                 reg_password = st.text_input(
                     "Password *",
-                    type="text" if st.session_state.get("show_reg_pwd_check") else "password",
+                    type="default" if st.session_state.get("show_reg_pwd_check") else "password",
                     placeholder="Create secure password",
                     key="create_pwd_input",
                 )
             with c_pwd2:
                 reg_confirm_password = st.text_input(
                     "Confirm Password *",
-                    type="text" if st.session_state.get("show_reg_pwd_check") else "password",
+                    type="default" if st.session_state.get("show_reg_pwd_check") else "password",
                     placeholder="Re-enter password",
                     key="create_pwd_confirm_input",
                 )
@@ -960,13 +1015,13 @@ if st.session_state.authenticated_user is None:
             p_low = bool(re.search(r"[a-z]", reg_password))
             p_num = bool(re.search(r"\d", reg_password))
 
-            color_ok = "#10B981"
-            color_mute = "#71717A" if is_dark else "#A1A1AA"
+            color_ok = "#059669"
+            color_mute = "#94A3B8"
 
             st.markdown(
                 clean_html(f"""
-                <div style="margin: 0.5rem 0 0.9rem 0; padding: 0.75rem 0.9rem; background: {'#151515' if is_dark else '#F8FAFC'}; border: 1px solid {'#292929' if is_dark else '#E2E8F0'}; border-radius: 10px;">
-                    <div style="font-size: 0.74rem; font-weight: 700; color: {'#A1A1AA' if is_dark else '#64748B'}; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.4rem;">
+                <div style="margin: 0.5rem 0 0.9rem 0; padding: 0.75rem 0.9rem; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px;">
+                    <div style="font-size: 0.74rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.4rem;">
                         Password Security Checklist:
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; font-size: 0.75rem;">
@@ -1018,7 +1073,7 @@ if st.session_state.authenticated_user is None:
 
             st.markdown(
                 clean_html(f"""
-                <div style="text-align: center; margin-top: 1.1rem; font-size: 0.8rem; color: {'#A1A1AA' if is_dark else '#64748B'};">
+                <div style="text-align: center; margin-top: 1.1rem; font-size: 0.8rem; color: #64748B;">
                     Already registered? Select the <strong>Sign In</strong> tab above.
                 </div>
                 """),
@@ -1235,7 +1290,7 @@ with st.sidebar:
         <div style="padding: 0.4rem 0.2rem 0.8rem 0.2rem; display: flex; align-items: center; gap: 0.6rem;">
             <span style="font-size: 1.75rem;">🎓</span>
             <div>
-                <div style="font-weight: 800; font-size: 1.2rem; color: #FFFFFF; letter-spacing: -0.02em;">CampusPilot AI</div>
+                <div style="font-weight: 800; font-size: 1.2rem; color: #0F172A; letter-spacing: -0.02em;">CampusPilot AI</div>
                 <div style="font-size: 0.72rem; color: #E50914; font-weight: 700;">{'Faculty Admin Portal' if is_admin else 'Student Operations'}</div>
             </div>
         </div>
@@ -1270,23 +1325,26 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Bottom Authenticated User Profile Card
-    role_color = "#E50914" if is_admin else "#10B981"
+    # Bottom Authenticated User Profile Card (White Theme)
+    role_color = "#E50914" if is_admin else "#059669"
     st.markdown(
         clean_html(f"""
-        <div style="background: {'#111111' if st.session_state.theme == 'dark' else '#F1F5F9'}; border: 1px solid {'#292929' if st.session_state.theme == 'dark' else '#CBD5E1'}; border-radius: 12px; padding: 0.85rem; margin-top: 0.8rem;">
+        <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 0.85rem; margin-top: 0.8rem; margin-bottom: 0.6rem;">
             <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
                 <span style="font-size: 1.35rem;">{avatar_icon}</span>
-                <div>
-                    <div style="font-weight: 700; font-size: 0.92rem; color: {'#FFFFFF' if st.session_state.theme == 'dark' else '#09090B'};">{student_name}</div>
-                    <div style="font-size: 0.7rem; color: {'#A1A1AA' if st.session_state.theme == 'dark' else '#64748B'};">{student_email}</div>
+                <div style="overflow: hidden;">
+                    <div style="font-weight: 700; font-size: 0.92rem; color: #0F172A; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">{student_name}</div>
+                    <div style="font-size: 0.7rem; color: #64748B; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">{student_email}</div>
                 </div>
             </div>
-            <div style="display: flex; gap: 0.3rem; margin-top: 0.4rem;">
-                <span style="background: rgba(255,255,255,0.08); color: {'#FFFFFF' if st.session_state.theme == 'dark' else '#09090B'}; font-size: 0.65rem; padding: 0.12rem 0.45rem; border-radius: 4px; font-weight: 600;">{user_id}</span>
-                <span style="background: rgba(229,9,20,0.15); color: {role_color}; font-size: 0.65rem; padding: 0.12rem 0.45rem; border-radius: 4px; font-weight: 700;">{account_type}</span>
+            <div style="display: flex; gap: 0.3rem; margin-top: 0.4rem; flex-wrap: wrap;">
+                <span style="background: #E2E8F0; color: #0F172A; font-size: 0.65rem; padding: 0.12rem 0.45rem; border-radius: 4px; font-weight: 600;">{user_id}</span>
+                <span style="background: rgba(229,9,20,0.1); color: {role_color}; font-size: 0.65rem; padding: 0.12rem 0.45rem; border-radius: 4px; font-weight: 700;">{account_type}</span>
             </div>
-            <div style="font-size: 0.68rem; color: {'#A1A1AA' if st.session_state.theme == 'dark' else '#64748B'}; margin-top: 0.4rem;">🏛️ {university_name}</div>
+            <div style="font-size: 0.68rem; color: #64748B; margin-top: 0.35rem; line-height: 1.35;">
+                🏛️ {university_name}<br>
+                📚 {department}
+            </div>
         </div>
         """),
         unsafe_allow_html=True,
@@ -1300,11 +1358,9 @@ with st.sidebar:
         st.session_state.pending_booking = None
         st.rerun()
 
-    st.caption(f"📅 Today: `{today_str}` &bull; Tomorrow: `{tomorrow_str}`")
-
 
 # ==============================================================================
-# COMPACT TOP APP BAR / BRAND HEADER
+# COMPACT TOP APP BAR / BRAND HEADER (CLEAN - NO THEME SWITCHER)
 # ==============================================================================
 backend_online = check_backend_health()
 status_pill = (
@@ -1313,7 +1369,7 @@ status_pill = (
     else '<span class="badge-offline">● Backend Offline</span>'
 )
 
-c_nav_left, c_nav_right = st.columns([2.2, 1.6])
+c_nav_left, c_nav_right = st.columns([2.5, 1.5])
 
 with c_nav_left:
     st.markdown(
@@ -1330,22 +1386,15 @@ with c_nav_left:
     )
 
 with c_nav_right:
-    c_pills, c_th_btn = st.columns([2.2, 1.1])
-    with c_pills:
-        st.markdown(
-            clean_html(f"""
-            <div style="display: flex; align-items: center; justify-content: flex-end; gap: 0.45rem; padding: 0.35rem 0;">
-                {status_pill}
-                <span class="badge-profile-chip">{avatar_icon} {student_name}</span>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-    with c_th_btn:
-        theme_icon = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
-        if st.button(theme_icon, key="nav_theme_toggle_btn", use_container_width=True):
-            st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
-            st.rerun()
+    st.markdown(
+        clean_html(f"""
+        <div style="display: flex; align-items: center; justify-content: flex-end; gap: 0.45rem; padding: 0.35rem 0;">
+            {status_pill}
+            <span class="badge-profile-chip">{avatar_icon} {student_name}</span>
+        </div>
+        """),
+        unsafe_allow_html=True,
+    )
 
 # Shared live facility data
 labs = get_all_laboratories()
@@ -1387,8 +1436,8 @@ if is_admin and st.session_state.current_page == "🛡️ Admin Dashboard":
                     <span class="stat-label">Pending Requests</span>
                     <span class="stat-icon">⏳</span>
                 </div>
-                <div class="stat-value" style="color: {'#FF303A' if metrics['pending_requests'] > 0 else '#FFFFFF'};">{metrics['pending_requests']}</div>
-                <div class="stat-footer" style="color: #F59E0B;">
+                <div class="stat-value" style="color: {'#DC2626' if metrics['pending_requests'] > 0 else '#0F172A'};">{metrics['pending_requests']}</div>
+                <div class="stat-footer" style="color: #D97706;">
                     <span>● Requires Review</span>
                 </div>
             </div>
@@ -1404,7 +1453,7 @@ if is_admin and st.session_state.current_page == "🛡️ Admin Dashboard":
                     <span class="stat-icon">✅</span>
                 </div>
                 <div class="stat-value">{metrics['approved_requests']}</div>
-                <div class="stat-footer" style="color: #10B981;">
+                <div class="stat-footer" style="color: #059669;">
                     <span>● Confirmed in Schedule</span>
                 </div>
             </div>
@@ -1420,7 +1469,7 @@ if is_admin and st.session_state.current_page == "🛡️ Admin Dashboard":
                     <span class="stat-icon">❌</span>
                 </div>
                 <div class="stat-value">{metrics['rejected_requests']}</div>
-                <div class="stat-footer" style="color: #E50914;">
+                <div class="stat-footer" style="color: #DC2626;">
                     <span>● With Documented Reason</span>
                 </div>
             </div>
@@ -1436,7 +1485,7 @@ if is_admin and st.session_state.current_page == "🛡️ Admin Dashboard":
                     <span class="stat-icon">🏢</span>
                 </div>
                 <div class="stat-value">{metrics['active_laboratories'] + metrics['active_rooms']}</div>
-                <div class="stat-footer" style="color: #10B981;">
+                <div class="stat-footer" style="color: #059669;">
                     <span>● {metrics['active_laboratories']} Labs &bull; {metrics['active_rooms']} Rooms</span>
                 </div>
             </div>
@@ -1465,10 +1514,10 @@ if is_admin and st.session_state.current_page == "🛡️ Admin Dashboard":
                 clean_html(f"""
                 <div class="booking-row">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
-                        <span style="font-weight: 700; font-size: 0.95rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #A1A1AA;">({r['service_type']})</span></span>
+                        <span style="font-weight: 700; font-size: 0.95rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({r['service_type']})</span></span>
                         <span class="{badge}">{stat.upper()} &bull; #{r['booking_id']}</span>
                     </div>
-                    <div style="font-size: 0.82rem; color: #A1A1AA;">
+                    <div style="font-size: 0.82rem; color: #64748B;">
                         👤 <b>{r['student_name']}</b> ({r['student_id']}) &bull; 📅 {r['booking_date']} &bull; ⏰ {r['start_time']} - {r['end_time']}<br>
                         🎯 <b>Purpose:</b> {r.get('purpose') or 'Academic / General Practical'}
                     </div>
@@ -1512,17 +1561,21 @@ elif is_admin and st.session_state.current_page == "📥 Booking Requests":
                 if cur_status == "rejected" and r.get("rejection_reason"):
                     rejection_html = f"""<div class="rejection-box"><b>Rejection Reason:</b> {r['rejection_reason']}</div>"""
 
+                dept_display = r.get("department") or "Computer Science & Engineering"
+                created_display = r.get("created_at") or "Standard Request"
+
                 st.markdown(
                     clean_html(f"""
                     <div class="content-card" style="margin-bottom: 0.75rem;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                            <span style="font-weight: 800; font-size: 1.05rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #A1A1AA;">({s_type})</span></span>
+                            <span style="font-weight: 800; font-size: 1.05rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({s_type})</span></span>
                             <span class="{status_badge}">{cur_status.upper()} &bull; #{b_id}</span>
                         </div>
-                        <div style="font-size: 0.84rem; color: #A1A1AA; line-height: 1.5;">
-                            👤 <b>Student:</b> {r['student_name']} &bull; <b>ID:</b> <code>{r['student_id']}</code><br>
+                        <div style="font-size: 0.84rem; color: #64748B; line-height: 1.55;">
+                            👤 <b>Student:</b> {r['student_name']} &bull; <b>ID:</b> <code>{r['student_id']}</code> &bull; <b>Dept:</b> {dept_display}<br>
                             📅 <b>Date:</b> {r['booking_date']} &bull; ⏰ <b>Slot:</b> {r['start_time']} - {r['end_time']}<br>
-                            🎯 <b>Purpose:</b> <i>{r.get('purpose') or 'Not specified'}</i>
+                            🎯 <b>Purpose:</b> <i>{r.get('purpose') or 'Not specified'}</i><br>
+                            ⏱️ <b>Submitted:</b> <span style="color: #64748B;">{created_display}</span>
                         </div>
                         {rejection_html}
                     </div>
@@ -1593,7 +1646,7 @@ elif is_admin and st.session_state.current_page == "🏢 Facility Management":
                         <span style="font-weight: 800; font-size: 1.05rem;">{lab['lab_name']}</span>
                         <span class="{'badge-live' if is_en else 'badge-offline'}">{'🟢 BOOKING ENABLED' if is_en else '🔴 BOOKING DISABLED'}</span>
                     </div>
-                    <div style="font-size: 0.82rem; color: #A1A1AA; margin-top: 0.2rem;">
+                    <div style="font-size: 0.82rem; color: #64748B; margin-top: 0.2rem;">
                         📍 {lab['location']} &bull; 👥 Capacity: <b>{lab['capacity']} Workstations</b>
                     </div>
                 </div>
@@ -1619,7 +1672,7 @@ elif is_admin and st.session_state.current_page == "🏢 Facility Management":
                         <span style="font-weight: 800; font-size: 1.05rem;">{room['room_name']}</span>
                         <span class="{'badge-live' if is_ren else 'badge-offline'}">{'🟢 BOOKING ENABLED' if is_ren else '🔴 BOOKING DISABLED'}</span>
                     </div>
-                    <div style="font-size: 0.82rem; color: #A1A1AA; margin-top: 0.2rem;">
+                    <div style="font-size: 0.82rem; color: #64748B; margin-top: 0.2rem;">
                         📍 {room['location']} &bull; 👥 Capacity: <b>{room['capacity']} Seats</b>
                     </div>
                 </div>
@@ -1638,28 +1691,57 @@ elif is_admin and st.session_state.current_page == "🏢 Facility Management":
 # ------------------------------------------------------------------------------
 elif is_admin and st.session_state.current_page == "🏖️ Leave Oversight":
     st.markdown("### 🏖️ Campus Student Leave Requests Oversight")
-    st.caption("Administrative log of student leave requests submitted across campus departments with automated policy decisions:")
+    st.caption("Review student leave applications across academic departments with policy decisions and administrator approval controls:")
 
     all_leaves = get_all_leave_requests()
     if all_leaves:
-        st.markdown(f"**Total Leaves Logged:** `{len(all_leaves)}`")
+        pending_leaves = [l for l in all_leaves if "pending" in l.get("status", "").lower()]
+        approved_leaves = [l for l in all_leaves if "approved" in l.get("status", "").lower()]
+        rejected_leaves = [l for l in all_leaves if "rejected" in l.get("status", "").lower()]
+
+        st.markdown(
+            f"**Total Leaves:** `{len(all_leaves)}` &bull; **Action Required:** `{len(pending_leaves)}` &bull; **Approved:** `{len(approved_leaves)}` &bull; **Rejected:** `{len(rejected_leaves)}`"
+        )
+
         for l in all_leaves:
-            st.markdown(
-                clean_html(f"""
-                <div class="content-card" style="margin-bottom: 0.75rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                        <span style="font-weight: 800; font-size: 1.05rem;">{l['leave_type']} &bull; {l['student_name']}</span>
-                        <span class="badge-live">{l['status']}</span>
+            l_id = l["leave_id"]
+            cur_lstatus = l.get("status", "Pending Review")
+            badge_class = "badge-live" if "approved" in cur_lstatus.lower() else ("badge-rejected" if "rejected" in cur_lstatus.lower() else "badge-pending")
+
+            col_lcard, col_lact = st.columns([3.4, 1.6])
+            with col_lcard:
+                st.markdown(
+                    clean_html(f"""
+                    <div class="content-card" style="margin-bottom: 0.75rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                            <span style="font-weight: 800; font-size: 1.05rem;">{l['leave_type']} &bull; {l['student_name']}</span>
+                            <span class="{badge_class}">{cur_lstatus}</span>
+                        </div>
+                        <div style="font-size: 0.84rem; color: #64748B; line-height: 1.5;">
+                            👤 <b>ID:</b> <code>{l['student_id']}</code> &bull; <b>Email:</b> {l['student_email']}<br>
+                            📅 <b>Dates:</b> {l['start_date']} to {l['end_date']}<br>
+                            📝 <b>Reason:</b> <i>{l['reason']}</i>
+                        </div>
                     </div>
-                    <div style="font-size: 0.84rem; color: #A1A1AA; line-height: 1.5;">
-                        👤 <b>ID:</b> <code>{l['student_id']}</code> &bull; <b>Email:</b> {l['student_email']}<br>
-                        📅 <b>Dates:</b> {l['start_date']} to {l['end_date']}<br>
-                        📝 <b>Reason:</b> <i>{l['reason']}</i>
-                    </div>
-                </div>
-                """),
-                unsafe_allow_html=True,
-            )
+                    """),
+                    unsafe_allow_html=True,
+                )
+
+            with col_lact:
+                if "pending" in cur_lstatus.lower():
+                    if st.button("✅ Approve Leave", key=f"appr_leave_btn_{l_id}", type="primary", use_container_width=True):
+                        update_leave_status(l_id, "Approved (Admin)")
+                        st.success(f"Leave #{l_id} Approved!")
+                        time.sleep(0.4)
+                        st.rerun()
+
+                    if st.button("❌ Reject Leave", key=f"rej_leave_btn_{l_id}", use_container_width=True):
+                        update_leave_status(l_id, "Rejected")
+                        st.warning(f"Leave #{l_id} Rejected.")
+                        time.sleep(0.4)
+                        st.rerun()
+                else:
+                    st.caption(f"Status: {cur_lstatus}")
     else:
         st.info("No student leave requests recorded yet.")
 
@@ -1731,7 +1813,7 @@ elif not is_admin and st.session_state.current_page == "📊 Student Dashboard":
                     <span class="stat-icon">📅</span>
                 </div>
                 <div class="stat-value">{my_active}</div>
-                <div class="stat-footer" style="color: #10B981;">
+                <div class="stat-footer" style="color: #059669;">
                     <span>● Confirmed in SQLite</span>
                 </div>
             </div>
@@ -1746,8 +1828,8 @@ elif not is_admin and st.session_state.current_page == "📊 Student Dashboard":
                     <span class="stat-label">Pending Approval</span>
                     <span class="stat-icon">⏳</span>
                 </div>
-                <div class="stat-value" style="color: {'#FF303A' if my_pending > 0 else '#FFFFFF'};">{my_pending}</div>
-                <div class="stat-footer" style="color: #F59E0B;">
+                <div class="stat-value" style="color: {'#DC2626' if my_pending > 0 else '#0F172A'};">{my_pending}</div>
+                <div class="stat-footer" style="color: #D97706;">
                     <span>● Under Review</span>
                 </div>
             </div>
@@ -1763,7 +1845,7 @@ elif not is_admin and st.session_state.current_page == "📊 Student Dashboard":
                     <span class="stat-icon">🏖️</span>
                 </div>
                 <div class="stat-value">{my_leaves}</div>
-                <div class="stat-footer" style="color: #10B981;">
+                <div class="stat-footer" style="color: #059669;">
                     <span>● Auto-Accepted</span>
                 </div>
             </div>
@@ -1779,7 +1861,7 @@ elif not is_admin and st.session_state.current_page == "📊 Student Dashboard":
                     <span class="stat-icon">🤖</span>
                 </div>
                 <div class="stat-value">Online</div>
-                <div class="stat-footer" style="color: #10B981;">
+                <div class="stat-footer" style="color: #059669;">
                     <span>● Gemini-Powered</span>
                 </div>
             </div>
@@ -1814,7 +1896,7 @@ elif not is_admin and st.session_state.current_page == "📊 Student Dashboard":
                             <span style="font-weight: 700; font-size: 0.95rem;">{b['facility_name']}</span>
                             <span class="{badge}">{b_stat.upper()} &bull; #{b['booking_id']}</span>
                         </div>
-                        <div style="font-size: 0.82rem; color: #A1A1AA;">
+                        <div style="font-size: 0.82rem; color: #64748B;">
                             📅 {b['booking_date']} &bull; ⏰ {b['start_time']} - {b['end_time']}<br>
                             🎯 <b>Purpose:</b> {b.get('purpose') or 'Academic Practical'}
                         </div>
@@ -1855,7 +1937,7 @@ elif not is_admin and st.session_state.current_page == "📊 Student Dashboard":
             clean_html(f"""
             <div class="content-card">
                 <div style="font-weight: 700; font-size: 0.88rem; margin-bottom: 0.4rem; color: #E50914;">💡 Booking Workflow Guide:</div>
-                <div style="font-size: 0.8rem; color: #A1A1AA; line-height: 1.5;">
+                <div style="font-size: 0.8rem; color: #64748B; line-height: 1.5;">
                     <b>1. Submit Request:</b> Select lab and state your purpose.<br>
                     <b>2. Pending Status:</b> Awaits faculty admin review.<br>
                     <b>3. Admin Approval:</b> Confirms slot or records reason.<br>
@@ -1925,10 +2007,10 @@ elif st.session_state.current_page == "💬 AI Assistant":
                         clean_html(f"""
                         <div class="rec-card">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                                <span style="font-weight: 800; font-size: 1.05rem;">{rec['facility_name']}</span>
+                                <span style="font-weight: 800; font-size: 1.05rem; color: #0F172A;">{rec['facility_name']}</span>
                                 <span class="{badge_class}">{rec.get('match_badge', 'Option')}</span>
                             </div>
-                            <div style="font-size: 0.84rem; color: #A1A1AA; margin-bottom: 0.4rem;">
+                            <div style="font-size: 0.84rem; color: #64748B; margin-bottom: 0.4rem;">
                                 📍 {rec.get('location')} &bull; 👥 Capacity: <b>{rec.get('capacity')}</b> &bull; ⏰ <b>{rec.get('start_time')} - {rec.get('end_time')}</b> ({rec.get('booking_date')})
                             </div>
                             <div style="font-size: 0.84rem; color: #E50914; margin-bottom: 0.75rem;">
@@ -1963,7 +2045,7 @@ elif st.session_state.current_page == "💬 AI Assistant":
                 <div class="booking-confirm-header">
                     <span>🛡️ Explicit Confirmation Required</span>
                 </div>
-                <p style="font-size: 0.9rem; color: #A1A1AA; margin: 0 0 1rem 0;">
+                <p style="font-size: 0.9rem; color: #64748B; margin: 0 0 1rem 0;">
                     The slot is confirmed available in SQLite. Please review the reservation parameters before confirming:
                 </p>
                 <div class="booking-details-grid">
@@ -2048,7 +2130,7 @@ elif not is_admin and st.session_state.current_page == "🔬 Lab Booking":
             start_t, end_t = pick_slot.split(" - ")
             date_str = pick_date.strftime("%Y-%m-%d")
 
-            # Purpose Field (Mandatory per Part 5)
+            # Purpose Field
             lab_purpose = st.text_input(
                 "Purpose of Reservation *",
                 value="Final Year AI Project Model Training Practical",
@@ -2078,7 +2160,6 @@ elif not is_admin and st.session_state.current_page == "🔬 Lab Booking":
                     else:
                         with st.spinner("Submitting booking request for admin approval..."):
                             try:
-                                # Create booking with status='pending' awaiting admin review
                                 b_record = create_booking(
                                     student_id=user_id,
                                     student_name=student_name,
@@ -2108,7 +2189,7 @@ elif not is_admin and st.session_state.current_page == "🔬 Lab Booking":
                         clean_html(f"""
                         <div class="booking-row">
                             <b>{b['start_time']} - {b['end_time']}</b> &bull; {b['student_name']}<br>
-                            <span style="font-size: 0.78rem; color: #A1A1AA;">Ref #{b['booking_id']} &bull; Status: {b['status'].upper()}</span>
+                            <span style="font-size: 0.78rem; color: #64748B;">Ref #{b['booking_id']} &bull; Status: {b['status'].upper()}</span>
                         </div>
                         """),
                         unsafe_allow_html=True,
@@ -2182,7 +2263,6 @@ elif not is_admin and st.session_state.current_page == "📚 Discussion Rooms":
                 if st.button("⚡ Reserve Discussion Room", type="primary", use_container_width=True, key="btn_confirm_room"):
                     with st.spinner("Reserving room in SQLite..."):
                         try:
-                            # Rooms can be confirmed directly
                             rb_rec = create_room_booking(
                                 student_id=user_id,
                                 student_name=student_name,
@@ -2209,7 +2289,7 @@ elif not is_admin and st.session_state.current_page == "📚 Discussion Rooms":
                         clean_html(f"""
                         <div class="booking-row">
                             <b>{rb['start_time']} - {rb['end_time']}</b> &bull; {rb['student_name']}<br>
-                            <span style="font-size: 0.78rem; color: #A1A1AA;">Ref #{rb['booking_id']} &bull; Status: {rb['status'].upper()}</span>
+                            <span style="font-size: 0.78rem; color: #64748B;">Ref #{rb['booking_id']} &bull; Status: {rb['status'].upper()}</span>
                         </div>
                         """),
                         unsafe_allow_html=True,
@@ -2264,10 +2344,10 @@ elif not is_admin and st.session_state.current_page == "📋 My Bookings":
                     clean_html(f"""
                     <div class="content-card" style="margin-bottom: 0.7rem;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                            <span style="font-weight: 800; font-size: 1.05rem;">{b['facility_name']} <span style="font-size: 0.8rem; color: #A1A1AA;">({s_type})</span></span>
+                            <span style="font-weight: 800; font-size: 1.05rem; color: #0F172A;">{b['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({s_type})</span></span>
                             <span class="{status_badge}">REF #{b_id} &bull; {cur_stat.upper()}</span>
                         </div>
-                        <div style="font-size: 0.84rem; color: #A1A1AA; line-height: 1.5;">
+                        <div style="font-size: 0.84rem; color: #64748B; line-height: 1.5;">
                             📅 <b>{b['booking_date']}</b> &bull; ⏰ <b>{b['start_time']} - {b['end_time']}</b> &bull; 📍 {b['location']}<br>
                             🎯 <b>Purpose:</b> <i>{b.get('purpose') or 'Academic Practical'}</i>
                         </div>
@@ -2349,10 +2429,16 @@ elif not is_admin and st.session_state.current_page == "🏖️ Leave Requests":
                             end_date=l_end.strftime("%Y-%m-%d"),
                             reason=leave_reason.strip(),
                         )
-                        st.success(
-                            f"🎉 Leave Request Approved! Reference #{l_rec['leave_id']}. "
-                            f"Policy Decision: **{l_rec['status']}**."
-                        )
+                        if "approved" in l_rec['status'].lower():
+                            st.success(
+                                f"🎉 Leave Request Auto-Accepted! Reference #{l_rec['leave_id']}. "
+                                f"Policy Decision: **{l_rec['status']}**."
+                            )
+                        else:
+                            st.info(
+                                f"📋 Leave Request Submitted for Administrator Review. Reference #{l_rec['leave_id']}. "
+                                f"Status: **{l_rec['status']}**."
+                            )
                         time.sleep(1)
                         st.rerun()
                     except Exception as ex:
@@ -2363,14 +2449,16 @@ elif not is_admin and st.session_state.current_page == "🏖️ Leave Requests":
         my_leaves = get_student_leave_requests(student_id=user_id)
         if my_leaves:
             for l in my_leaves:
+                st_val = l.get("status", "Pending Review")
+                badge_cls = "badge-live" if "approved" in st_val.lower() else ("badge-rejected" if "rejected" in st_val.lower() else "badge-pending")
                 st.markdown(
                     clean_html(f"""
                     <div class="content-card" style="margin-bottom: 0.6rem;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
                             <span style="font-weight: 700; font-size: 0.95rem;">{l['leave_type']}</span>
-                            <span class="badge-live">{l['status']}</span>
+                            <span class="{badge_cls}">{st_val}</span>
                         </div>
-                        <div style="font-size: 0.82rem; color: #A1A1AA;">
+                        <div style="font-size: 0.82rem; color: #64748B;">
                             📅 {l['start_date']} to {l['end_date']}<br>
                             📝 <i>{l['reason']}</i>
                         </div>
@@ -2400,10 +2488,10 @@ elif not is_admin and st.session_state.current_page == "🏢 Facilities":
                 clean_html(f"""
                 <div class="content-card" style="margin-bottom: 1rem;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                        <span style="font-weight: 800; font-size: 1.1rem;">{lab['lab_name']}</span>
+                        <span style="font-weight: 800; font-size: 1.1rem; color: #0F172A;">{lab['lab_name']}</span>
                         <span class="{'badge-live' if is_en else 'badge-offline'}">{'ACTIVE' if is_en else 'MAINTENANCE'}</span>
                     </div>
-                    <div style="font-size: 0.85rem; color: #A1A1AA; margin-bottom: 0.6rem;">
+                    <div style="font-size: 0.85rem; color: #64748B; margin-bottom: 0.6rem;">
                         📍 {lab['location']}<br>
                         👥 Capacity: <b>{lab['capacity']} Workstations</b>
                     </div>
@@ -2432,10 +2520,10 @@ elif not is_admin and st.session_state.current_page == "🏢 Facilities":
                 clean_html(f"""
                 <div class="content-card" style="margin-bottom: 1rem;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                        <span style="font-weight: 800; font-size: 1.1rem;">{room['room_name']}</span>
+                        <span style="font-weight: 800; font-size: 1.1rem; color: #0F172A;">{room['room_name']}</span>
                         <span class="{'badge-live' if is_ren else 'badge-offline'}">{'ACTIVE' if is_ren else 'MAINTENANCE'}</span>
                     </div>
-                    <div style="font-size: 0.85rem; color: #A1A1AA; margin-bottom: 0.6rem;">
+                    <div style="font-size: 0.85rem; color: #64748B; margin-bottom: 0.6rem;">
                         📍 {room['location']}<br>
                         👥 Capacity: <b>{room['capacity']} Seats</b>
                     </div>
@@ -2454,7 +2542,7 @@ elif not is_admin and st.session_state.current_page == "🏢 Facilities":
 
 
 # ------------------------------------------------------------------------------
-# SHARED VIEW: ⚙️ SETTINGS & DIAGNOSTICS
+# SHARED VIEW: ⚙️ SETTINGS & DIAGNOSTICS (NO THEME SWITCHER)
 # ------------------------------------------------------------------------------
 elif st.session_state.current_page == "⚙️ Settings":
     st.markdown(f"### ⚙️ System Settings & Diagnostics ({student_name})")
@@ -2493,19 +2581,6 @@ elif st.session_state.current_page == "⚙️ Settings":
         st.checkbox("Calendar invitation attachment (.ics)", value=True, key="notif_ics")
 
     with col_set2:
-        st.markdown("#### 🎨 Theme & Appearance")
-        chosen_theme = st.radio(
-            "Select Interface Theme",
-            ["🌙 Dark Mode (Black & Red)", "☀️ Light Mode"],
-            index=0 if st.session_state.theme == "dark" else 1,
-            key="settings_theme_radio",
-            horizontal=True,
-        )
-        new_theme = "dark" if "Dark" in chosen_theme else "light"
-        if new_theme != st.session_state.theme:
-            st.session_state.theme = new_theme
-            st.rerun()
-
         st.markdown("#### 🖥️ System Health & Diagnostics")
         st.caption("Technical infrastructure metrics:")
         st.markdown(
@@ -2517,7 +2592,7 @@ elif st.session_state.current_page == "⚙️ Settings":
                 <p style="margin-bottom: 0.4rem;"><b>Database Store:</b> <code>data/campus.db</code> (SQLite)</p>
                 <p style="margin-bottom: 0.4rem;"><b>AI Engine:</b> <code>Gemini-Powered AI Campus Assistant</code></p>
                 <p style="margin-bottom: 0.4rem;"><b>Timezone:</b> <code>Asia/Kolkata (IST)</code></p>
-                <p style="margin-bottom: 0.4rem;"><b>Theme Mode:</b> <code>{'DARK MODE (Black & Red #080808)' if st.session_state.theme == 'dark' else 'LIGHT MODE'}</code></p>
+                <p style="margin-bottom: 0.4rem;"><b>Theme:</b> <code>Light Mode (Permanent)</code></p>
                 <p style="margin-bottom: 0.4rem;"><b>Email Dispatch:</b> <code>{'Gmail SMTP Active' if is_smtp_configured() else 'Simulated / Ready'}</code></p>
             </div>
             """),

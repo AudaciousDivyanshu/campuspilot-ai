@@ -262,6 +262,329 @@ class TestAdminAndStudentWorkflows(unittest.TestCase):
         self.assertGreaterEqual(m["total_laboratories"], 3)
         self.assertGreaterEqual(m["total_rooms"], 3)
 
+    def test_11_single_white_theme_enforcement_and_no_theme_switchers(self):
+        """11. Verify single permanent white theme with all toggle switches removed."""
+        streamlit_app_code = (PROJECT_ROOT / "frontend" / "streamlit_app.py").read_text(encoding="utf-8")
+        self.assertNotIn("Switch to Dark", streamlit_app_code)
+        self.assertNotIn("Switch to Light", streamlit_app_code)
+        self.assertNotIn("nav_theme_toggle_btn", streamlit_app_code)
+        self.assertNotIn("toggle_theme_auth_btn", streamlit_app_code)
+        self.assertNotIn("settings_theme_radio", streamlit_app_code)
+        self.assertIn('st.session_state.theme = "light"', streamlit_app_code)
+
+    def test_12_no_demo_login_buttons_on_login_screen(self):
+        """12. Verify Dr. Sharma and all demo login buttons are completely removed from UI."""
+        streamlit_app_code = (PROJECT_ROOT / "frontend" / "streamlit_app.py").read_text(encoding="utf-8")
+        self.assertNotIn("btn_quick_admin", streamlit_app_code)
+        self.assertNotIn("Log In as Faculty Administrator", streamlit_app_code)
+        self.assertNotIn("Faculty & Administrator Demonstration Portal", streamlit_app_code)
+        self.assertNotIn("quick_demo_arnav", streamlit_app_code)
+        self.assertNotIn("quick_demo_rahul", streamlit_app_code)
+        self.assertNotIn("AdminPass123", streamlit_app_code)  # Not exposed publicly on login page
+
+    def test_13_secure_admin_login_resolves_admin_dashboard(self):
+        """13. Verify secure admin authentication routes to Administrative Dashboard."""
+        auth_ok, admin = authenticate_user("admin@campus.edu", "AdminPass123")
+        self.assertTrue(auth_ok)
+        self.assertEqual(admin["account_type"], "Administrator")
+
+        auth_ok_s, student = authenticate_user(self.test_student_email, self.test_student_pwd)
+        self.assertTrue(auth_ok_s)
+        self.assertEqual(student["account_type"], "Student")
+
+    def test_14_password_input_field_types_valid_in_streamlit(self):
+        """14. Verify password fields use supported Streamlit types ('password' or 'default')."""
+        streamlit_app_code = (PROJECT_ROOT / "frontend" / "streamlit_app.py").read_text(encoding="utf-8")
+        # Ensure unsupported type="text" is never passed to st.text_input
+        self.assertNotIn('type="text"', streamlit_app_code)
+        # Ensure 'default' is used when password visibility is toggled on
+        self.assertIn('type="default" if show_pwd else "password"', streamlit_app_code)
+        self.assertIn('type="default" if st.session_state.get("show_reg_pwd_check") else "password"', streamlit_app_code)
+
+    def test_15_student_registration_validation_and_duplicate_handling(self):
+        """15. Verify full registration validation: password rules, duplicate prevention, and hashing."""
+        from app.services.demo_auth import is_password_valid, validate_password_strength
+
+        # Invalid password checks
+        self.assertFalse(validate_password_strength("short")["min_length"])
+        self.assertFalse(validate_password_strength("nouppercase123")["has_upper"])
+        self.assertFalse(validate_password_strength("NOLOWERCASE123")["has_lower"])
+        self.assertFalse(validate_password_strength("NoNumberPass")["has_digit"])
+
+        valid, errs = is_password_valid("weak")
+        self.assertFalse(valid)
+        self.assertGreater(len(errs), 0)
+
+        # Duplicate registration prevention
+        dup_ok, dup_msg = register_user(
+            email=self.test_student_email,
+            password="AnotherPass123",
+            full_name="Duplicate User",
+            student_id="CS-DUP-01",
+        )
+        self.assertFalse(dup_ok)
+        self.assertIn("already exists", dup_msg.lower())
+
+    def test_16_sidebar_date_removed_and_profile_includes_department(self):
+        """16. Verify Today/Tomorrow date caption is completely removed from the sidebar and profile includes department."""
+        streamlit_app_code = (PROJECT_ROOT / "frontend" / "streamlit_app.py").read_text(encoding="utf-8")
+        self.assertNotIn("st.caption(f\"📅 Today:", streamlit_app_code)
+        self.assertNotIn("st.caption(f'📅 Today:", streamlit_app_code)
+        self.assertNotIn("&bull; Tomorrow:", streamlit_app_code)
+        self.assertIn("📚 {department}", streamlit_app_code)
+
+    def test_17_secure_portal_mode_and_admin_role_enforcement(self):
+        """17. Verify clean Student/Admin portal selector and backend role authorization enforcement."""
+        streamlit_app_code = (PROJECT_ROOT / "frontend" / "streamlit_app.py").read_text(encoding="utf-8")
+        self.assertIn('key="auth_portal_mode"', streamlit_app_code)
+        self.assertIn('👨‍🎓 Student Portal', streamlit_app_code)
+        self.assertIn('🛡️ Administrator Portal', streamlit_app_code)
+        # Backend role enforcement check
+        self.assertIn('if res.get("account_type") != "Administrator":', streamlit_app_code)
+        self.assertIn('Access Denied: This account does not possess institutional administrator privileges', streamlit_app_code)
+
+    def test_18_booking_requests_include_department_and_timestamp(self):
+        """18. Verify admin booking request items include student department and submission timestamp."""
+        all_reqs = get_all_booking_requests()
+        self.assertIsInstance(all_reqs, list)
+        if len(all_reqs) > 0:
+            first = all_reqs[0]
+            self.assertIn("department", first)
+            self.assertIn("created_at", first)
+
+    def test_19_admin_provisioning_idempotence_and_restart_persistence(self):
+        """19. Test administrator account provisioning mechanism via env/defaults."""
+        from app.services.demo_auth import init_admin_account, _load_users, _hash_password
+        admin = init_admin_account()
+        self.assertEqual(admin["account_type"], "Administrator")
+        self.assertEqual(admin["email"], os.getenv("ADMIN_EMAIL", "admin@campus.edu").lower())
+
+        # Verify password is NOT stored in plaintext
+        users = _load_users()
+        admin_rec = users[admin["email"]]
+        self.assertNotEqual(admin_rec["password_hash"], "AdminPass123")
+        self.assertEqual(len(admin_rec["password_hash"]), 64)  # SHA-256
+
+        # Verify in SQLite user_accounts table
+        from app.database.operations import get_user_account_by_email
+        db_admin = get_user_account_by_email(admin["email"])
+        self.assertIsNotNone(db_admin)
+        self.assertEqual(db_admin["account_type"], "Administrator")
+
+        # Restart simulation: Calling init_admin_account again is idempotent
+        count_before = len([u for u in _load_users().values() if u["account_type"] == "Administrator"])
+        admin2 = init_admin_account()
+        count_after = len([u for u in _load_users().values() if u["account_type"] == "Administrator"])
+        self.assertEqual(count_before, count_after)
+
+    def test_20_admin_login_role_enforcement_and_error_handling(self):
+        """20. Test administrator login role enforcement and specific error messages."""
+        admin_email = os.getenv("ADMIN_EMAIL", "admin@campus.edu")
+        admin_pwd = os.getenv("ADMIN_PASSWORD", "AdminPass123")
+
+        # 1. Successful administrator login
+        ok, res = authenticate_user(admin_email, admin_pwd, required_role="Administrator")
+        self.assertTrue(ok)
+        self.assertEqual(res["account_type"], "Administrator")
+
+        # 2. Student account denied from administrator portal
+        ok_denied, msg_denied = authenticate_user(self.test_student_email, self.test_student_pwd, required_role="Administrator")
+        self.assertFalse(ok_denied)
+        self.assertIn("Access Denied", msg_denied)
+        self.assertIn("Student", msg_denied)
+
+        # 3. Wrong password error
+        ok_wrong_pwd, msg_wrong_pwd = authenticate_user(admin_email, "WrongPassword999", required_role="Administrator")
+        self.assertFalse(ok_wrong_pwd)
+        self.assertEqual(msg_wrong_pwd, "Incorrect password. Please verify and try again.")
+
+        # 4. Non-existent account error
+        ok_not_found, msg_not_found = authenticate_user("nonexistent.admin@campus.edu", "SomePass123", required_role="Administrator")
+        self.assertFalse(ok_not_found)
+        self.assertIn("No administrator account found", msg_not_found)
+
+    def test_21_end_to_end_student_to_admin_approval_workflow(self):
+        """21. End-to-end: Student registers, requests lab, admin approves, student sees 'approved'."""
+        student_email = "student.workflow.demo@campus.edu"
+        student_pwd = "WorkflowPass123"
+        student_id = "STU2026-WF1"
+        student_name = "Workflow Student"
+
+        # Register student
+        reg_ok, student = register_user(
+            email=student_email,
+            password=student_pwd,
+            full_name=student_name,
+            account_type="Student",
+            student_id=student_id,
+            department="Computer Science & Engineering",
+        )
+        self.assertTrue(reg_ok or "already exists" in str(student))
+
+        # Clear any prior booking for this student ID
+        from app.database.connection import get_db_context
+        with get_db_context() as conn:
+            conn.cursor().execute("DELETE FROM bookings WHERE student_id = ?;", (student_id,))
+
+        # Student submits a laboratory booking request with initial pending status
+        target_date = (date.today() + timedelta(days=6)).strftime("%Y-%m-%d")
+        b_res = create_booking(
+            student_id=student_id,
+            student_name=student_name,
+            lab_id=1,
+            booking_date=target_date,
+            start_time="09:00",
+            end_time="11:00",
+            status="pending",
+            purpose="Deep Learning Final Semester Project Validation",
+        )
+        self.assertIn("booking_id", b_res)
+        b_id = b_res["booking_id"]
+
+        # Student checks reservations -> status must be 'pending'
+        student_bookings = get_all_student_reservations(student_id=student_id)
+        target_b = next((b for b in student_bookings if b["booking_id"] == b_id), None)
+        self.assertIsNotNone(target_b)
+        self.assertEqual(target_b["status"], "pending")
+
+        # Admin logs in and approves the request
+        admin_email = os.getenv("ADMIN_EMAIL", "admin@campus.edu")
+        admin_pwd = os.getenv("ADMIN_PASSWORD", "AdminPass123")
+        adm_ok, adm_user = authenticate_user(admin_email, admin_pwd, required_role="Administrator")
+        self.assertTrue(adm_ok)
+
+        # Admin performs approval on the SQLite record
+        appr_ok, appr_msg = approve_booking(booking_id=b_id, service_type="Laboratory")
+        self.assertTrue(appr_ok)
+
+        # Student checks reservations again -> status must now be 'approved'
+        student_bookings_after = get_all_student_reservations(student_id=student_id)
+        target_b_after = next((b for b in student_bookings_after if b["booking_id"] == b_id), None)
+        self.assertIsNotNone(target_b_after)
+        self.assertEqual(target_b_after["status"], "approved")
+
+    def test_22_backend_fastapi_admin_security_and_authorization(self):
+        """22. Verify FastAPI backend enforces admin authorization and rejects student callers."""
+        from fastapi import HTTPException
+        from app.api.routes import (
+            auth_login_endpoint,
+            auth_register_endpoint,
+            get_admin_requests_endpoint,
+            verify_admin_authorization,
+        )
+
+        # 1. Student calling admin dependency must be rejected with 403 Forbidden
+        with self.assertRaises(HTTPException) as cm:
+            verify_admin_authorization(
+                x_user_role="Student",
+                x_user_email=self.test_student_email,
+            )
+        self.assertEqual(cm.exception.status_code, 403)
+        self.assertIn("Access Denied", cm.exception.detail)
+
+        # 2. Administrator calling admin authorization dependency succeeds
+        admin_email = os.getenv("ADMIN_EMAIL", "admin@campus.edu")
+        admin_auth = verify_admin_authorization(
+            x_user_role="Administrator",
+            x_user_email=admin_email,
+        )
+        self.assertEqual(admin_auth["account_type"], "Administrator")
+
+        # 3. Administrator accessing requests endpoint succeeds
+        reqs = get_admin_requests_endpoint(admin_auth=admin_auth)
+        self.assertIsInstance(reqs, list)
+
+        # 4. Test /auth/login endpoint
+        admin_pwd = os.getenv("ADMIN_PASSWORD", "AdminPass123")
+        login_res = auth_login_endpoint({"email": admin_email, "password": admin_pwd, "portal": "admin"})
+        self.assertEqual(login_res["status"], "success")
+        self.assertEqual(login_res["user"]["account_type"], "Administrator")
+
+        # 5. Test /auth/register endpoint enforces Student role
+        import uuid
+        unique_student_email = f"fastapi.student.{uuid.uuid4().hex[:6]}@campus.edu"
+        reg_res = auth_register_endpoint({
+            "email": unique_student_email,
+            "password": "Password123",
+            "full_name": "API Student",
+            "student_id": "API2026-001",
+        })
+        self.assertEqual(reg_res["status"], "success")
+        self.assertEqual(reg_res["user"]["account_type"], "Student")
+
+    def test_23_discussion_rooms_excluded_from_admin_queue(self):
+        """23. Confirm discussion-room bookings do NOT appear in administrator approval queue."""
+        from app.database.operations import create_room_booking, get_all_booking_requests
+        target_date = (date.today() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+        # Student reserves a discussion room
+        r_res = create_room_booking(
+            student_id=self.test_student_id,
+            student_name=self.test_student_name,
+            room_id=1,
+            booking_date=target_date,
+            start_time="15:00",
+            end_time="17:00",
+            purpose="Peer Study & Algorithm Review",
+        )
+        self.assertIn("booking_id", r_res)
+        room_b_id = r_res["booking_id"]
+
+        # Retrieve administrator approval queue
+        admin_reqs = get_all_booking_requests()
+        # Verify that the room booking does NOT appear in the admin queue
+        found_in_admin = any(req["booking_id"] == room_b_id and req.get("service_type") == "Library Room" for req in admin_reqs)
+        self.assertFalse(found_in_admin, "Discussion-room bookings must NOT appear in the administrator approval queue.")
+
+    def test_24_leave_policy_and_admin_leave_approval_workflow(self):
+        """24. Test automatic leave acceptance vs pending review, and administrator approval/rejection."""
+        from app.database.operations import create_leave_request, update_leave_status, get_student_leave_requests
+
+        start_d = (date.today() + timedelta(days=10)).strftime("%Y-%m-%d")
+        end_d = (date.today() + timedelta(days=15)).strftime("%Y-%m-%d")  # 6 days -> Pending Review
+
+        # 1. Personal / Extended leave must remain 'Pending Review'
+        personal_leave = create_leave_request(
+            student_id=self.test_student_id,
+            student_name=self.test_student_name,
+            student_email=self.test_student_email,
+            leave_type="Personal / Family Emergency",
+            start_date=start_d,
+            end_date=end_d,
+            reason="Attending family event out of state",
+        )
+        self.assertEqual(personal_leave["status"], "Pending Review")
+        l_id = personal_leave["leave_id"]
+
+        # 2. Administrator approves the pending leave
+        ok_appr = update_leave_status(l_id, "Approved (Admin)")
+        self.assertTrue(ok_appr)
+
+        # 3. Student verifies updated status is 'Approved (Admin)'
+        s_leaves = get_student_leave_requests(self.test_student_id)
+        target = next((l for l in s_leaves if l["leave_id"] == l_id), None)
+        self.assertIsNotNone(target)
+        self.assertEqual(target["status"], "Approved (Admin)")
+
+        # 4. Administrator rejects a leave
+        rejected_leave = create_leave_request(
+            student_id=self.test_student_id,
+            student_name=self.test_student_name,
+            student_email=self.test_student_email,
+            leave_type="Personal / Family Emergency",
+            start_date=start_d,
+            end_date=end_d,
+            reason="Non-academic travel during semester exams",
+        )
+        rej_id = rejected_leave["leave_id"]
+        ok_rej = update_leave_status(rej_id, "Rejected")
+        self.assertTrue(ok_rej)
+
+        s_leaves_after = get_student_leave_requests(self.test_student_id)
+        target_rej = next((l for l in s_leaves_after if l["leave_id"] == rej_id), None)
+        self.assertIsNotNone(target_rej)
+        self.assertEqual(target_rej["status"], "Rejected")
+
 
 if __name__ == "__main__":
     unittest.main()

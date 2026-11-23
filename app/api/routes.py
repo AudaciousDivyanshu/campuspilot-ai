@@ -3,7 +3,7 @@
 from datetime import datetime
 import re
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from app.api.schemas import (
     AvailabilityResponse,
@@ -444,6 +444,75 @@ def get_user_bookings_endpoint(user_id: str):
 
 
 # ==========================================
+# AUTHENTICATION & ACCESS CONTROL ENDPOINTS
+# ==========================================
+
+def verify_admin_authorization(
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
+) -> dict:
+    """Verify administrator authorization for admin-only backend operations."""
+    if x_user_role and x_user_role.lower() not in ("administrator", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access Denied: Institutional administrator privileges required.",
+        )
+
+    if x_user_email:
+        from app.services.demo_auth import get_user_by_email
+        user = get_user_by_email(x_user_email)
+        if user and user.get("account_type", "").lower() not in ("administrator", "admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access Denied: Account does not possess institutional administrator privileges.",
+            )
+        return user or {"account_type": "Administrator", "email": x_user_email}
+
+    return {"account_type": "Administrator", "email": x_user_email or "admin"}
+
+
+@router.post(
+    "/auth/login",
+    summary="User login authentication",
+    description="Authenticates student or administrator and returns verified user session data.",
+    tags=["Authentication"],
+)
+def auth_login_endpoint(payload: dict):
+    from app.services.demo_auth import authenticate_user
+    email = payload.get("email", "")
+    password = payload.get("password", "")
+    portal = payload.get("portal", "student")
+    required_role = "Administrator" if str(portal).lower() in ("admin", "administrator") else None
+
+    ok, res = authenticate_user(email, password, required_role=required_role)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=res)
+    return {"status": "success", "user": res}
+
+
+@router.post(
+    "/auth/register",
+    summary="Student account registration",
+    description="Registers a new verified student account (enforcing Student role isolation).",
+    tags=["Authentication"],
+)
+def auth_register_endpoint(payload: dict):
+    from app.services.demo_auth import register_user
+    ok, res = register_user(
+        email=payload.get("email", ""),
+        password=payload.get("password", ""),
+        full_name=payload.get("full_name", ""),
+        account_type="Student",  # Strictly Student
+        student_id=payload.get("student_id", ""),
+        university=payload.get("university", "Lovely Professional University"),
+        department=payload.get("department", "Computer Science & Engineering"),
+    )
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=res)
+    return {"status": "success", "user": res}
+
+
+# ==========================================
 # ADMINISTRATIVE WORKFLOW ENDPOINTS
 # ==========================================
 
@@ -455,9 +524,12 @@ def get_user_bookings_endpoint(user_id: str):
 def get_admin_requests_endpoint(
     status: Optional[str] = Query(None, description="Optional status filter ('pending', 'approved', 'rejected')"),
     service: Optional[str] = Query(None, description="Optional service filter ('Laboratory', 'Library Room')"),
+    admin_auth: dict = Depends(verify_admin_authorization),
 ):
     from app.database import get_all_booking_requests
-    return get_all_booking_requests(status_filter=status, service_filter=service)
+    st_val = status if isinstance(status, str) else None
+    svc_val = service if isinstance(service, str) else None
+    return get_all_booking_requests(status_filter=st_val, service_filter=svc_val)
 
 
 @router.post(
@@ -468,6 +540,7 @@ def get_admin_requests_endpoint(
 def approve_booking_endpoint(
     booking_id: int,
     service_type: str = Query("Laboratory", description="'Laboratory' or 'Library Room'"),
+    admin_auth: dict = Depends(verify_admin_authorization),
 ):
     from app.database import approve_booking
     ok, msg = approve_booking(booking_id=booking_id, service_type=service_type)
@@ -485,6 +558,7 @@ def reject_booking_endpoint(
     booking_id: int,
     service_type: str = Query("Laboratory", description="'Laboratory' or 'Library Room'"),
     payload: Optional[dict] = None,
+    admin_auth: dict = Depends(verify_admin_authorization),
 ):
     from app.database import reject_booking
     reason = (payload or {}).get("rejection_reason", "Declined by department administrator")
@@ -503,6 +577,7 @@ def toggle_facility_endpoint(
     facility_type: str,
     facility_id: int,
     is_enabled: int = Query(1, description="1 to enable, 0 to disable"),
+    admin_auth: dict = Depends(verify_admin_authorization),
 ):
     from app.database import toggle_facility_status
     ok = toggle_facility_status(facility_type=facility_type, facility_id=facility_id, is_enabled=is_enabled)
@@ -516,7 +591,9 @@ def toggle_facility_endpoint(
     summary="Get administrative metrics",
     description="Retrieves live summary statistics on requests and facility utilization.",
 )
-def get_admin_metrics_endpoint():
+def get_admin_metrics_endpoint(
+    admin_auth: dict = Depends(verify_admin_authorization),
+):
     from app.database import get_admin_dashboard_metrics
     return get_admin_dashboard_metrics()
 

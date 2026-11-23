@@ -27,10 +27,13 @@ from app.database.operations import (
     get_student_leave_requests,
     get_student_profile,
     get_student_profile_by_email,
+    get_user_account_by_email,
     recommend_matching_facilities,
     reject_booking,
     toggle_facility_status,
+    update_leave_status,
     upsert_student_profile,
+    upsert_user_account,
     validate_time_range,
 )
 
@@ -52,6 +55,8 @@ __all__ = [
     "get_all_student_reservations",
     "get_student_profile",
     "get_student_profile_by_email",
+    "get_user_account_by_email",
+    "upsert_user_account",
     "upsert_student_profile",
     "cancel_reservation",
     "get_facility_details_by_id",
@@ -65,4 +70,5 @@ __all__ = [
     "create_leave_request",
     "get_student_leave_requests",
     "get_all_leave_requests",
+    "update_leave_status",
 ]

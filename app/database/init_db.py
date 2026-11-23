@@ -128,6 +128,26 @@ def create_tables(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # User accounts table for local SQLite authentication and role management
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_accounts (
+            user_id TEXT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            display_name TEXT,
+            account_type TEXT NOT NULL DEFAULT 'Student',
+            student_id TEXT,
+            university TEXT DEFAULT 'Lovely Professional University',
+            department TEXT DEFAULT 'Computer Science & Engineering',
+            avatar TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
     # Leave requests table (Student submission & Automated Acceptance policy)
     cursor.execute(
         """

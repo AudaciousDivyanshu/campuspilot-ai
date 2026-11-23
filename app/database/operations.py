@@ -658,6 +658,68 @@ def upsert_student_profile(
             }
 
 
+def get_user_account_by_email(email: str, db_path: str | Path | None = None) -> dict[str, Any] | None:
+    """Retrieve user account record from SQLite user_accounts by email."""
+    clean_email = (email or "").strip().lower()
+    if not clean_email:
+        return None
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT user_id, email, password_hash, full_name, display_name,
+                   account_type, student_id, university, department, avatar, created_at, updated_at
+            FROM user_accounts
+            WHERE LOWER(email) = ?;
+            """,
+            (clean_email,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def upsert_user_account(user_dict: dict[str, Any], db_path: str | Path | None = None) -> bool:
+    """Insert or update user account record in SQLite user_accounts table."""
+    user_id = user_dict.get("user_id")
+    email = (user_dict.get("email") or "").strip().lower()
+    pwd_hash = user_dict.get("password_hash", "")
+    full_name = user_dict.get("full_name", "")
+    display_name = user_dict.get("display_name") or full_name
+    account_type = user_dict.get("account_type", "Student")
+    student_id = user_dict.get("student_id", "")
+    university = user_dict.get("university", "Lovely Professional University")
+    department = user_dict.get("department", "Engineering & Technology")
+    avatar = user_dict.get("avatar", "👨‍🎓" if account_type != "Administrator" else "🛡️")
+
+    if not user_id or not email or not pwd_hash:
+        return False
+
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO user_accounts (
+                user_id, email, password_hash, full_name, display_name,
+                account_type, student_id, university, department, avatar, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                email = excluded.email,
+                password_hash = excluded.password_hash,
+                full_name = excluded.full_name,
+                display_name = excluded.display_name,
+                account_type = excluded.account_type,
+                student_id = excluded.student_id,
+                university = excluded.university,
+                department = excluded.department,
+                avatar = excluded.avatar,
+                updated_at = CURRENT_TIMESTAMP;
+            """,
+            (user_id, email, pwd_hash, full_name, display_name, account_type, student_id, university, department, avatar),
+        )
+        return True
+
+
 
 def cancel_reservation(booking_id: int, service_type: str = "Laboratory", db_path: str | Path | None = None) -> bool:
     """Cancel a booking by setting status = 'cancelled'."""
@@ -807,9 +869,16 @@ def recommend_matching_facilities(
 def get_all_booking_requests(
     status_filter: str | None = None,
     service_filter: str | None = None,
+    include_rooms: bool = False,
     db_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Retrieve all student booking requests across labs and discussion rooms for administration."""
+    """Retrieve booking requests for administrator approval.
+
+    Per CampusPilot AI policy:
+    - Discussion-room reservations are self-service student bookings and do NOT appear in the administrator approval queue.
+    - Only laboratory booking requests appear in the administrator's review queue by default.
+    - Discussion rooms are only returned if include_rooms=True or service_filter specifies Library Room.
+    """
     with get_db_context(db_path) as conn:
         cursor = conn.cursor()
 
@@ -819,27 +888,33 @@ def get_all_booking_requests(
             SELECT b.booking_id, b.student_id, b.student_name, b.lab_id as facility_id,
                    l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
                    b.booking_date, b.start_time, b.end_time, b.status,
-                   b.purpose, b.rejection_reason, b.created_at
+                   b.purpose, b.rejection_reason, b.created_at,
+                   COALESCE(sp.department, 'Computer Science & Engineering') as department
             FROM bookings b
             JOIN labs l ON b.lab_id = l.lab_id
+            LEFT JOIN student_profiles sp ON (b.student_id = sp.user_id OR b.student_name = sp.full_name)
             ORDER BY b.booking_date DESC, b.start_time DESC;
             """
         )
         lab_requests = [dict(row) for row in cursor.fetchall()]
 
-        # Rooms
-        cursor.execute(
-            """
-            SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
-                   r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
-                   rb.booking_date, rb.start_time, rb.end_time, rb.status,
-                   rb.purpose, rb.rejection_reason, rb.created_at
-            FROM room_bookings rb
-            JOIN discussion_rooms r ON rb.room_id = r.room_id
-            ORDER BY rb.booking_date DESC, rb.start_time DESC;
-            """
-        )
-        room_requests = [dict(row) for row in cursor.fetchall()]
+        # Rooms are strictly excluded from admin approval queue unless explicitly queried
+        room_requests = []
+        if include_rooms or (service_filter and "room" in service_filter.lower()):
+            cursor.execute(
+                """
+                SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
+                       r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
+                       rb.booking_date, rb.start_time, rb.end_time, rb.status,
+                       rb.purpose, rb.rejection_reason, rb.created_at,
+                       COALESCE(sp.department, 'General Engineering') as department
+                FROM room_bookings rb
+                JOIN discussion_rooms r ON rb.room_id = r.room_id
+                LEFT JOIN student_profiles sp ON (rb.student_id = sp.user_id OR rb.student_name = sp.full_name)
+                ORDER BY rb.booking_date DESC, rb.start_time DESC;
+                """
+            )
+            room_requests = [dict(row) for row in cursor.fetchall()]
 
         all_requests = lab_requests + room_requests
 
@@ -1019,8 +1094,22 @@ def create_leave_request(
         raise ValueError(f"Start date '{s_date}' cannot be later than end date '{e_date}'.")
 
     # Configured Automatic Acceptance Policy:
-    # Academic and Medical leaves are automatically accepted per campus rules
-    status = "Approved (Auto-Accepted)"
+    # 1. Academic, Medical, and On-Duty leaves with duration <= 3 days are automatically accepted per campus policy
+    # 2. Leaves that exceed 3 days, or personal / family leaves require administrator review ('Pending Review')
+    is_auto_eligible = any(cat in clean_type.lower() for cat in ["academic", "medical", "conference", "sick", "on-duty", "project"])
+
+    try:
+        from datetime import datetime as dt
+        d1 = dt.strptime(s_date, "%Y-%m-%d")
+        d2 = dt.strptime(e_date, "%Y-%m-%d")
+        duration = (d2 - d1).days + 1
+    except Exception:
+        duration = 1
+
+    if is_auto_eligible and duration <= 3:
+        status = "Approved (Auto-Accepted)"
+    else:
+        status = "Pending Review"
 
     with get_db_context(db_path) as conn:
         cursor = conn.cursor()
@@ -1043,6 +1132,22 @@ def create_leave_request(
             "reason": clean_reason,
             "status": status,
         }
+
+
+def update_leave_status(leave_id: int, status: str, db_path: str | Path | None = None) -> bool:
+    """Update student leave request status in SQLite ('Approved (Admin)', 'Rejected', etc.)."""
+    clean_status = (status or "").strip()
+    with get_db_context(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE leave_requests
+            SET status = ?
+            WHERE leave_id = ?;
+            """,
+            (clean_status, leave_id),
+        )
+        return cursor.rowcount > 0
 
 
 def get_student_leave_requests(student_id: str, db_path: str | Path | None = None) -> list[dict[str, Any]]:
