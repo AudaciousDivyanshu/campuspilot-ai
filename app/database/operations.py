@@ -483,73 +483,44 @@ def create_room_booking(
 
 
 def get_all_student_reservations(student_id: str, student_name: str | None = None, db_path: str | Path | None = None) -> list[dict[str, Any]]:
-    """Retrieve all laboratory and library room reservations for a student strictly by their unique student_id."""
+    """Retrieve all laboratory and library room reservations for a student strictly by their unique user/student ID."""
     clean_id = (student_id or "").strip()
-    clean_name = (student_name or "").strip()
-    
+    if not clean_id:
+        return []
+
     with get_db_context(db_path) as conn:
         cursor = conn.cursor()
-        
-        # Lab bookings
-        if clean_id:
-            cursor.execute(
-                """
-                SELECT b.booking_id, b.student_id, b.student_name, b.lab_id as facility_id,
-                       l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
-                       b.booking_date, b.start_time, b.end_time, b.status,
-                       b.purpose, b.rejection_reason, b.created_at
-                FROM bookings b
-                JOIN labs l ON b.lab_id = l.lab_id
-                WHERE b.student_id = ?
-                ORDER BY b.booking_date DESC, b.start_time DESC;
-                """,
-                (clean_id,),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT b.booking_id, b.student_id, b.student_name, b.lab_id as facility_id,
-                       l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
-                       b.booking_date, b.start_time, b.end_time, b.status,
-                       b.purpose, b.rejection_reason, b.created_at
-                FROM bookings b
-                JOIN labs l ON b.lab_id = l.lab_id
-                WHERE b.student_name = ?
-                ORDER BY b.booking_date DESC, b.start_time DESC;
-                """,
-                (clean_name,),
-            )
+
+        # Lab bookings strictly isolated by owner ID
+        cursor.execute(
+            """
+            SELECT b.booking_id, b.student_id, b.student_name, b.lab_id as facility_id,
+                   l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
+                   b.booking_date, b.start_time, b.end_time, b.status,
+                   b.purpose, b.rejection_reason, b.created_at
+            FROM bookings b
+            JOIN labs l ON b.lab_id = l.lab_id
+            WHERE b.student_id = ?
+            ORDER BY b.booking_date DESC, b.start_time DESC;
+            """,
+            (clean_id,),
+        )
         lab_rows = [dict(row) for row in cursor.fetchall()]
 
-        # Room bookings
-        if clean_id:
-            cursor.execute(
-                """
-                SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
-                       r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
-                       rb.booking_date, rb.start_time, rb.end_time, rb.status,
-                       rb.purpose, rb.rejection_reason, rb.created_at
-                FROM room_bookings rb
-                JOIN discussion_rooms r ON rb.room_id = r.room_id
-                WHERE rb.student_id = ?
-                ORDER BY rb.booking_date DESC, rb.start_time DESC;
-                """,
-                (clean_id,),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
-                       r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
-                       rb.booking_date, rb.start_time, rb.end_time, rb.status,
-                       rb.purpose, rb.rejection_reason, rb.created_at
-                FROM room_bookings rb
-                JOIN discussion_rooms r ON rb.room_id = r.room_id
-                WHERE rb.student_name = ?
-                ORDER BY rb.booking_date DESC, rb.start_time DESC;
-                """,
-                (clean_name,),
-            )
+        # Room bookings strictly isolated by owner ID
+        cursor.execute(
+            """
+            SELECT rb.booking_id, rb.student_id, rb.student_name, rb.room_id as facility_id,
+                   r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
+                   rb.booking_date, rb.start_time, rb.end_time, rb.status,
+                   rb.purpose, rb.rejection_reason, rb.created_at
+            FROM room_bookings rb
+            JOIN discussion_rooms r ON rb.room_id = r.room_id
+            WHERE rb.student_id = ?
+            ORDER BY rb.booking_date DESC, rb.start_time DESC;
+            """,
+            (clean_id,),
+        )
         room_rows = [dict(row) for row in cursor.fetchall()]
 
         combined = lab_rows + room_rows
@@ -721,12 +692,27 @@ def upsert_user_account(user_dict: dict[str, Any], db_path: str | Path | None = 
 
 
 
-def cancel_reservation(booking_id: int, service_type: str = "Laboratory", db_path: str | Path | None = None) -> bool:
-    """Cancel a booking by setting status = 'cancelled'."""
+def cancel_reservation(
+    booking_id: int,
+    service_type: str = "Laboratory",
+    owner_id: str | None = None,
+    is_admin: bool = False,
+    db_path: str | Path | None = None,
+) -> bool:
+    """Cancel a booking by setting status = 'cancelled'. Enforces owner_id unless is_admin=True."""
     table = "bookings" if "lab" in (service_type or "").lower() else "room_bookings"
+    clean_owner = (owner_id or "").strip()
     with get_db_context(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute(f"UPDATE {table} SET status = 'cancelled' WHERE booking_id = ?;", (booking_id,))
+        if not is_admin and owner_id is not None:
+            if not clean_owner:
+                return False
+            cursor.execute(
+                f"UPDATE {table} SET status = 'cancelled' WHERE booking_id = ? AND student_id = ?;",
+                (booking_id, clean_owner),
+            )
+        else:
+            cursor.execute(f"UPDATE {table} SET status = 'cancelled' WHERE booking_id = ?;", (booking_id,))
         return cursor.rowcount > 0
 
 
@@ -889,10 +875,14 @@ def get_all_booking_requests(
                    l.lab_name as facility_name, l.location as location, 'Laboratory' as service_type,
                    b.booking_date, b.start_time, b.end_time, b.status,
                    b.purpose, b.rejection_reason, b.created_at,
-                   COALESCE(sp.department, 'Computer Science & Engineering') as department
+                   COALESCE(
+                       (SELECT sp.department FROM student_profiles sp 
+                        WHERE sp.user_id = b.student_id OR sp.full_name = b.student_name 
+                        ORDER BY sp.updated_at DESC LIMIT 1),
+                       'Computer Science & Engineering'
+                   ) as department
             FROM bookings b
             JOIN labs l ON b.lab_id = l.lab_id
-            LEFT JOIN student_profiles sp ON (b.student_id = sp.user_id OR b.student_name = sp.full_name)
             ORDER BY b.booking_date DESC, b.start_time DESC;
             """
         )
@@ -907,16 +897,30 @@ def get_all_booking_requests(
                        r.room_name as facility_name, r.location as location, 'Library Room' as service_type,
                        rb.booking_date, rb.start_time, rb.end_time, rb.status,
                        rb.purpose, rb.rejection_reason, rb.created_at,
-                       COALESCE(sp.department, 'General Engineering') as department
+                       COALESCE(
+                           (SELECT sp.department FROM student_profiles sp 
+                            WHERE sp.user_id = rb.student_id OR sp.full_name = rb.student_name 
+                            ORDER BY sp.updated_at DESC LIMIT 1),
+                           'General Engineering'
+                       ) as department
                 FROM room_bookings rb
                 JOIN discussion_rooms r ON rb.room_id = r.room_id
-                LEFT JOIN student_profiles sp ON (rb.student_id = sp.user_id OR rb.student_name = sp.full_name)
                 ORDER BY rb.booking_date DESC, rb.start_time DESC;
                 """
             )
             room_requests = [dict(row) for row in cursor.fetchall()]
 
         all_requests = lab_requests + room_requests
+
+        # Ensure strict deduplication by (service_type, booking_id)
+        seen_keys = set()
+        deduped_requests = []
+        for req in all_requests:
+            key = (req.get("service_type"), req.get("booking_id"))
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped_requests.append(req)
+        all_requests = deduped_requests
 
         if status_filter:
             sf = status_filter.strip().lower()
@@ -949,6 +953,12 @@ def approve_booking(
         req = cursor.fetchone()
         if not req:
             return False, f"Request #{booking_id} does not exist in {table}."
+
+        cur_status = (req["status"] or "").lower()
+        if cur_status in ("approved", "confirmed"):
+            return False, f"Request #{booking_id} has already been approved."
+        if cur_status == "rejected":
+            return False, f"Request #{booking_id} cannot be approved because it has already been rejected."
 
         target_facility_id = req[id_col]
         target_date = req["booking_date"]
@@ -996,6 +1006,14 @@ def reject_booking(
     reason = rejection_reason.strip() or "Declined by department administrator"
     with get_db_context(db_path) as conn:
         cursor = conn.cursor()
+        cursor.execute(f"SELECT status FROM {table} WHERE booking_id = ?;", (booking_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+        cur_st = (row["status"] or "").lower()
+        if cur_st == "rejected" or cur_st in ("approved", "confirmed"):
+            return False
+
         cursor.execute(
             f"UPDATE {table} SET status = 'rejected', rejection_reason = ? WHERE booking_id = ?;",
             (reason, booking_id),
@@ -1041,6 +1059,13 @@ def get_admin_dashboard_metrics(db_path: str | Path | None = None) -> dict[str, 
         cursor.execute("SELECT count(*) as total, sum(CASE WHEN is_enabled = 1 THEN 1 ELSE 0 END) as active FROM discussion_rooms;")
         room_fac = cursor.fetchone()
 
+        # Leave stats
+        cursor.execute("SELECT status, count(*) as count FROM leave_requests GROUP BY status;")
+        leave_counts = {row["status"]: row["count"] for row in cursor.fetchall()}
+        pending_leaves_count = sum(c for st, c in leave_counts.items() if "pending" in (st or "").lower())
+        approved_leaves_count = sum(c for st, c in leave_counts.items() if "approved" in (st or "").lower())
+        rejected_leaves_count = sum(c for st, c in leave_counts.items() if "rejected" in (st or "").lower())
+
         total_pending = lab_counts.get("pending", 0) + room_counts.get("pending", 0)
         total_approved = (
             lab_counts.get("approved", 0) + lab_counts.get("confirmed", 0) +
@@ -1056,6 +1081,9 @@ def get_admin_dashboard_metrics(db_path: str | Path | None = None) -> dict[str, 
             "approved_requests": total_approved,
             "rejected_requests": total_rejected,
             "cancelled_requests": total_cancelled,
+            "pending_leaves": pending_leaves_count,
+            "approved_leaves": approved_leaves_count,
+            "rejected_leaves": rejected_leaves_count,
             "total_laboratories": lab_fac["total"] if lab_fac else 0,
             "active_laboratories": lab_fac["active"] if (lab_fac and lab_fac["active"] is not None) else 0,
             "total_rooms": room_fac["total"] if room_fac else 0,
@@ -1064,7 +1092,7 @@ def get_admin_dashboard_metrics(db_path: str | Path | None = None) -> dict[str, 
 
 
 # ==========================================
-# LEAVE REQUEST OPERATIONS (AUTO-ACCEPTANCE)
+# LEAVE REQUEST OPERATIONS (ADMINISTRATOR REVIEW)
 # ==========================================
 
 def create_leave_request(
@@ -1077,7 +1105,7 @@ def create_leave_request(
     reason: str,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Submit a student leave request with automated campus policy evaluation."""
+    """Submit a student leave request. All leave requests require administrator review."""
     clean_id = student_id.strip()
     clean_name = student_name.strip()
     clean_email = student_email.strip().lower()
@@ -1093,23 +1121,8 @@ def create_leave_request(
     if s_date > e_date:
         raise ValueError(f"Start date '{s_date}' cannot be later than end date '{e_date}'.")
 
-    # Configured Automatic Acceptance Policy:
-    # 1. Academic, Medical, and On-Duty leaves with duration <= 3 days are automatically accepted per campus policy
-    # 2. Leaves that exceed 3 days, or personal / family leaves require administrator review ('Pending Review')
-    is_auto_eligible = any(cat in clean_type.lower() for cat in ["academic", "medical", "conference", "sick", "on-duty", "project"])
-
-    try:
-        from datetime import datetime as dt
-        d1 = dt.strptime(s_date, "%Y-%m-%d")
-        d2 = dt.strptime(e_date, "%Y-%m-%d")
-        duration = (d2 - d1).days + 1
-    except Exception:
-        duration = 1
-
-    if is_auto_eligible and duration <= 3:
-        status = "Approved (Auto-Accepted)"
-    else:
-        status = "Pending Review"
+    # Critical requirement: Every student leave request must first be reviewed by the Administrator
+    status = "Pending Approval"
 
     with get_db_context(db_path) as conn:
         cursor = conn.cursor()
@@ -1134,18 +1147,38 @@ def create_leave_request(
         }
 
 
-def update_leave_status(leave_id: int, status: str, db_path: str | Path | None = None) -> bool:
-    """Update student leave request status in SQLite ('Approved (Admin)', 'Rejected', etc.)."""
+def update_leave_status(
+    leave_id: int,
+    status: str,
+    rejection_reason: str = "",
+    reviewed_by: str = "",
+    db_path: str | Path | None = None,
+) -> bool:
+    """Update student leave request status in SQLite ('Approved', 'Rejected', etc.) with reviewer audit info."""
     clean_status = (status or "").strip()
+    clean_reason = (rejection_reason or "").strip()
+    clean_reviewer = (reviewed_by or "").strip()
+
     with get_db_context(db_path) as conn:
         cursor = conn.cursor()
+        cursor.execute("SELECT status FROM leave_requests WHERE leave_id = ?;", (leave_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+        cur_st = (row["status"] or "").lower()
+        if cur_st in ("approved", "rejected") and cur_st == clean_status.lower():
+            return False
+
         cursor.execute(
             """
             UPDATE leave_requests
-            SET status = ?
+            SET status = ?,
+                rejection_reason = ?,
+                reviewed_by = ?,
+                reviewed_at = CURRENT_TIMESTAMP
             WHERE leave_id = ?;
             """,
-            (clean_status, leave_id),
+            (clean_status, clean_reason, clean_reviewer, leave_id),
         )
         return cursor.rowcount > 0
 
@@ -1160,7 +1193,7 @@ def get_student_leave_requests(student_id: str, db_path: str | Path | None = Non
         cursor.execute(
             """
             SELECT leave_id, student_id, student_name, student_email, leave_type,
-                   start_date, end_date, reason, status, created_at
+                   start_date, end_date, reason, status, rejection_reason, reviewed_by, reviewed_at, created_at
             FROM leave_requests
             WHERE student_id = ?
             ORDER BY created_at DESC;
@@ -1177,7 +1210,7 @@ def get_all_leave_requests(db_path: str | Path | None = None) -> list[dict[str, 
         cursor.execute(
             """
             SELECT leave_id, student_id, student_name, student_email, leave_type,
-                   start_date, end_date, reason, status, created_at
+                   start_date, end_date, reason, status, rejection_reason, reviewed_by, reviewed_at, created_at
             FROM leave_requests
             ORDER BY created_at DESC;
             """

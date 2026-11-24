@@ -148,7 +148,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Leave requests table (Student submission & Automated Acceptance policy)
+    # Leave requests table (Student submission & Administrator Review policy)
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS leave_requests (
@@ -160,7 +160,10 @@ def create_tables(conn: sqlite3.Connection) -> None:
             start_date TEXT NOT NULL,
             end_date TEXT NOT NULL,
             reason TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Approved (Auto-Accepted)',
+            status TEXT NOT NULL DEFAULT 'Pending Approval',
+            rejection_reason TEXT DEFAULT '',
+            reviewed_by TEXT DEFAULT '',
+            reviewed_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """
@@ -296,6 +299,16 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
     disc_cols = [row["name"] if isinstance(row, dict) else row[1] for row in cursor.fetchall()]
     if "is_enabled" not in disc_cols:
         cursor.execute("ALTER TABLE discussion_rooms ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 1;")
+
+    # Migrate leave_requests table
+    cursor.execute("PRAGMA table_info(leave_requests);")
+    leave_cols = [row["name"] if isinstance(row, dict) else row[1] for row in cursor.fetchall()]
+    if "rejection_reason" not in leave_cols:
+        cursor.execute("ALTER TABLE leave_requests ADD COLUMN rejection_reason TEXT DEFAULT '';")
+    if "reviewed_by" not in leave_cols:
+        cursor.execute("ALTER TABLE leave_requests ADD COLUMN reviewed_by TEXT DEFAULT '';")
+    if "reviewed_at" not in leave_cols:
+        cursor.execute("ALTER TABLE leave_requests ADD COLUMN reviewed_at TIMESTAMP;")
 
 
 def init_db(db_path: str | Path | None = None) -> Path:

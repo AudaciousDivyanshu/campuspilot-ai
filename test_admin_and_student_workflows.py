@@ -223,8 +223,8 @@ class TestAdminAndStudentWorkflows(unittest.TestCase):
         ai_lab2 = next((l for l in labs2 if l["lab_id"] == 2), None)
         self.assertEqual(ai_lab2.get("is_enabled"), 1)
 
-    def test_09_student_leave_request_auto_acceptance(self):
-        """9. Student submits leave request; automated acceptance policy marks it approved."""
+    def test_09_student_leave_request_submission_pending_approval(self):
+        """9. Student submits leave request; status starts as 'Pending Approval' for admin review."""
         start_d = (date.today() + timedelta(days=10)).strftime("%Y-%m-%d")
         end_d = (date.today() + timedelta(days=12)).strftime("%Y-%m-%d")
         reason = "Attending International Conference on Machine Learning (ICML)"
@@ -239,14 +239,14 @@ class TestAdminAndStudentWorkflows(unittest.TestCase):
             reason=reason,
         )
         self.assertIsNotNone(leave.get("leave_id"))
-        self.assertEqual(leave.get("status"), "Approved (Auto-Accepted)")
+        self.assertEqual(leave.get("status"), "Pending Approval")
 
         # Verify student history
         history = get_student_leave_requests(self.test_student_id)
         found = any(l["leave_id"] == leave["leave_id"] for l in history)
         self.assertTrue(found)
 
-        # Verify administrator oversight
+        # Verify administrator oversight sees it in pending list
         all_leaves = get_all_leave_requests()
         found_admin = any(l["leave_id"] == leave["leave_id"] for l in all_leaves)
         self.assertTrue(found_admin)
@@ -536,54 +536,167 @@ class TestAdminAndStudentWorkflows(unittest.TestCase):
         found_in_admin = any(req["booking_id"] == room_b_id and req.get("service_type") == "Library Room" for req in admin_reqs)
         self.assertFalse(found_in_admin, "Discussion-room bookings must NOT appear in the administrator approval queue.")
 
-    def test_24_leave_policy_and_admin_leave_approval_workflow(self):
-        """24. Test automatic leave acceptance vs pending review, and administrator approval/rejection."""
+    def test_24_leave_approval_and_rejection_workflow(self):
+        """24. Test full leave lifecycle: starts as Pending Approval, approved by admin, and rejected with reason."""
         from app.database.operations import create_leave_request, update_leave_status, get_student_leave_requests
 
         start_d = (date.today() + timedelta(days=10)).strftime("%Y-%m-%d")
-        end_d = (date.today() + timedelta(days=15)).strftime("%Y-%m-%d")  # 6 days -> Pending Review
+        end_d = (date.today() + timedelta(days=15)).strftime("%Y-%m-%d")
 
-        # 1. Personal / Extended leave must remain 'Pending Review'
-        personal_leave = create_leave_request(
+        # 1. Student submits leave request -> MUST start as 'Pending Approval'
+        med_leave = create_leave_request(
             student_id=self.test_student_id,
             student_name=self.test_student_name,
             student_email=self.test_student_email,
-            leave_type="Personal / Family Emergency",
+            leave_type="Medical / Sick Leave",
             start_date=start_d,
             end_date=end_d,
-            reason="Attending family event out of state",
+            reason="Hospitalization and post-surgical recovery",
         )
-        self.assertEqual(personal_leave["status"], "Pending Review")
-        l_id = personal_leave["leave_id"]
+        self.assertEqual(med_leave["status"], "Pending Approval")
+        l_id = med_leave["leave_id"]
 
         # 2. Administrator approves the pending leave
-        ok_appr = update_leave_status(l_id, "Approved (Admin)")
+        ok_appr = update_leave_status(l_id, "Approved", reviewed_by="Dr. Sharma")
         self.assertTrue(ok_appr)
 
-        # 3. Student verifies updated status is 'Approved (Admin)'
+        # 3. Student verifies updated status is 'Approved' with reviewer recorded
         s_leaves = get_student_leave_requests(self.test_student_id)
         target = next((l for l in s_leaves if l["leave_id"] == l_id), None)
         self.assertIsNotNone(target)
-        self.assertEqual(target["status"], "Approved (Admin)")
+        self.assertEqual(target["status"], "Approved")
+        self.assertEqual(target.get("reviewed_by"), "Dr. Sharma")
 
-        # 4. Administrator rejects a leave
-        rejected_leave = create_leave_request(
+        # 4. Student submits another leave request
+        rej_leave = create_leave_request(
             student_id=self.test_student_id,
             student_name=self.test_student_name,
             student_email=self.test_student_email,
             leave_type="Personal / Family Emergency",
             start_date=start_d,
             end_date=end_d,
-            reason="Non-academic travel during semester exams",
+            reason="Non-academic travel during semester mid-terms",
         )
-        rej_id = rejected_leave["leave_id"]
-        ok_rej = update_leave_status(rej_id, "Rejected")
+        rej_id = rej_leave["leave_id"]
+        self.assertEqual(rej_leave["status"], "Pending Approval")
+
+        # 5. Administrator rejects leave with reason
+        rej_reason = "Declined per institutional attendance policy during exam period"
+        ok_rej = update_leave_status(rej_id, "Rejected", rejection_reason=rej_reason, reviewed_by="Dr. Sharma")
         self.assertTrue(ok_rej)
 
+        # 6. Student verifies status is 'Rejected' and sees rejection reason
         s_leaves_after = get_student_leave_requests(self.test_student_id)
         target_rej = next((l for l in s_leaves_after if l["leave_id"] == rej_id), None)
         self.assertIsNotNone(target_rej)
         self.assertEqual(target_rej["status"], "Rejected")
+        self.assertEqual(target_rej.get("rejection_reason"), rej_reason)
+
+    def test_25_admin_registration_without_verification_code(self):
+        """25. Admin registration succeeds directly without any verification code requirement."""
+        new_admin_email = "prof.kapoor@campus.edu"
+        new_admin_pwd = "AdminSecure2026"
+        new_admin_name = "Prof. S. Kapoor"
+        new_admin_dept = "Computer Science / HOD"
+
+        # Register without any verification code
+        ok, res = register_user(
+            email=new_admin_email,
+            password=new_admin_pwd,
+            full_name=new_admin_name,
+            account_type="Administrator",
+            department=new_admin_dept,
+        )
+        if not ok:
+            self.assertIn("already exists", res)
+        else:
+            self.assertEqual(res["account_type"], "Administrator")
+            self.assertEqual(res["full_name"], new_admin_name)
+            self.assertEqual(res["department"], new_admin_dept)
+            self.assertEqual(res["avatar"], "🛡️")
+
+        # Authenticate newly created administrator
+        auth_ok, admin_user = authenticate_user(new_admin_email, new_admin_pwd, required_role="Administrator")
+        self.assertTrue(auth_ok)
+        self.assertEqual(admin_user["account_type"], "Administrator")
+
+    def test_26_preconfigured_demo_admin_credentials_and_rejection_of_wrong_pwd(self):
+        """26. Preconfigured demo administrator credentials work reliably, and wrong password is rejected."""
+        # Valid credentials
+        auth_ok, admin = authenticate_user("admin@campus.edu", "AdminPass123", required_role="Administrator")
+        self.assertTrue(auth_ok)
+        self.assertEqual(admin["account_type"], "Administrator")
+        self.assertEqual(admin["full_name"], "Dr. Sharma")
+
+        # Invalid credentials rejected
+        bad_ok, bad_res = authenticate_user("admin@campus.edu", "IncorrectPassword123", required_role="Administrator")
+        self.assertFalse(bad_ok)
+        self.assertIn("Incorrect password", bad_res)
+
+    def test_27_cross_portal_blocking_student_denied_admin_portal(self):
+        """27. Student credentials attempting to sign in to Administrator Portal are denied."""
+        auth_ok, res = authenticate_user(self.test_student_email, self.test_student_pwd, required_role="Administrator")
+        self.assertFalse(auth_ok)
+        self.assertIn("access denied", str(res).lower())
+
+    def test_28_two_tab_independent_session_simulation(self):
+        """28. Simulate independent Tab 1 (Student) and Tab 2 (Administrator) concurrent workflows."""
+        # Tab 1: Student Session State
+        tab1_session = {
+            "authenticated_user": None,
+            "current_page": None,
+        }
+        # Tab 2: Administrator Session State
+        tab2_session = {
+            "authenticated_user": None,
+            "current_page": "🛡️ Admin Dashboard",
+        }
+
+        # Step A: Tab 1 logs in student
+        auth_ok_s, user_s = authenticate_user(self.test_student_email, self.test_student_pwd, required_role="Student")
+        self.assertTrue(auth_ok_s)
+        tab1_session["authenticated_user"] = user_s
+
+        # Step B: Tab 2 logs in administrator
+        auth_ok_a, user_a = authenticate_user("admin@campus.edu", "AdminPass123", required_role="Administrator")
+        self.assertTrue(auth_ok_a)
+        tab2_session["authenticated_user"] = user_a
+
+        # Verify session independence: Tab 1 is Student, Tab 2 is Administrator
+        self.assertEqual(tab1_session["authenticated_user"]["account_type"], "Student")
+        self.assertEqual(tab2_session["authenticated_user"]["account_type"], "Administrator")
+
+        # Step C: Tab 1 (Student) creates a pending AI Lab booking
+        tab_booking_date = (date.today() + timedelta(days=6)).strftime("%Y-%m-%d")
+        b_tab = create_booking(
+            student_id=tab1_session["authenticated_user"]["student_id"],
+            student_name=tab1_session["authenticated_user"]["full_name"],
+            lab_id=2,  # AI Lab
+            booking_date=tab_booking_date,
+            start_time="14:00",
+            end_time="16:00",
+            status="pending",
+            purpose="Two-Tab Live Demonstration Testing",
+        )
+        tab_b_id = b_tab["booking_id"]
+        self.assertEqual(b_tab["status"], "pending")
+
+        # Step D: Tab 2 (Administrator) checks approval queue and approves
+        admin_pending = get_all_booking_requests(status_filter="pending")
+        self.assertTrue(any(r["booking_id"] == tab_b_id for r in admin_pending))
+
+        ok_approve, msg = approve_booking(tab_b_id, service_type="Laboratory")
+        self.assertTrue(ok_approve)
+
+        # Step E: Tab 1 (Student) checks their bookings; status is now approved
+        student_bookings = get_all_student_reservations(student_id=tab1_session["authenticated_user"]["student_id"])
+        verified_b = next((r for r in student_bookings if r["booking_id"] == tab_b_id), None)
+        self.assertIsNotNone(verified_b)
+        self.assertEqual(verified_b["status"], "approved")
+
+        # Both sessions remain completely intact and unaltered
+        self.assertEqual(tab1_session["authenticated_user"]["account_type"], "Student")
+        self.assertEqual(tab2_session["authenticated_user"]["account_type"], "Administrator")
 
 
 if __name__ == "__main__":

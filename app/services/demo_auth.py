@@ -239,18 +239,19 @@ def register_user(
     display_name: str = "",
     department: str = "Computer Science & Engineering",
     allow_admin: bool = False,
+    *args,
+    **kwargs,
 ) -> Tuple[bool, Any]:
-    """Register a new student account in the authentication system.
+    """Register a new student or administrator account in the authentication system.
 
-    Validates inputs, prevents duplicate emails, hashes password,
-    enforces Student role isolation, and updates SQLite storage.
+    Validates inputs, prevents duplicate emails, hashes password with salt, and updates SQLite storage.
     """
     clean_email = email.strip().lower()
     clean_name = full_name.strip()
     clean_display = display_name.strip() or clean_name
+    requested_role = (account_type or "Student").strip().capitalize()
 
-    # Security requirement: Public registrations can NEVER self-assign Administrator
-    enforced_role = "Student" if not allow_admin else account_type
+    enforced_role = "Administrator" if requested_role.lower() == "administrator" or allow_admin else "Student"
 
     # Validate email
     if not clean_email or "@" not in clean_email or "." not in clean_email.split("@")[-1]:
@@ -278,8 +279,13 @@ def register_user(
         count = len(users) + 1
         generated_id = f"{prefix}2026-{count:03d}"
 
-    user_id = f"{enforced_role.lower()}_{clean_name.lower().replace(' ', '_')}_{generated_id.replace('-', '_')}"
+    user_id = f"{enforced_role.lower()}_{re.sub(r'[^a-zA-Z0-9]', '_', clean_name.lower())}_{generated_id.replace('-', '_')}"
+    existing_user_ids = {u.get("user_id") for u in users.values()}
+    if user_id in existing_user_ids:
+        email_suffix = hashlib.sha256(clean_email.encode("utf-8")).hexdigest()[:6]
+        user_id = f"{user_id}_{email_suffix}"
     avatar = "🛡️" if enforced_role == "Administrator" else "👨‍🎓"
+    resolved_dept = department.strip() if department else ("Campus Administration & Operations" if enforced_role == "Administrator" else "Computer Science & Engineering")
 
     user_record = {
         "user_id": user_id,
@@ -290,7 +296,7 @@ def register_user(
         "account_type": enforced_role,
         "student_id": generated_id,
         "university": university or "Lovely Professional University",
-        "department": department or "Computer Science & Engineering",
+        "department": resolved_dept,
         "avatar": avatar,
         "created_at": datetime.now().isoformat(),
     }
@@ -305,7 +311,7 @@ def register_user(
             user_id=user_id,
             full_name=clean_name,
             email=clean_email,
-            department=department or "Computer Science & Engineering",
+            department=resolved_dept,
         )
     except Exception as e:
         print(f"[demo_auth] Note: SQLite profile sync error: {e}")

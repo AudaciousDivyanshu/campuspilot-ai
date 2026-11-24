@@ -167,7 +167,11 @@ def check_availability(
     summary="Create a new lab booking",
     description="Validates input, checks for conflicts, and saves a confirmed booking to SQLite.",
 )
-def create_new_booking(payload: BookingCreateRequest) -> BookingResponse:
+def create_new_booking(
+    payload: BookingCreateRequest,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+) -> BookingResponse:
     """Create a new confirmed lab booking."""
     # Validate start_time < end_time
     try:
@@ -175,10 +179,15 @@ def create_new_booking(payload: BookingCreateRequest) -> BookingResponse:
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+    # Enforce authenticated user ownership when X-User-Id header is provided
+    effective_student_id = payload.student_id
+    if x_user_id and (not x_user_role or x_user_role.lower() not in ("administrator", "admin")):
+        effective_student_id = x_user_id.strip()
+
     # Create the booking through our database operations module
     try:
         created = create_booking(
-            student_id=payload.student_id,
+            student_id=effective_student_id,
             student_name=payload.student_name,
             lab_id=payload.lab_id,
             booking_date=payload.booking_date,
@@ -299,7 +308,11 @@ def check_room_availability_endpoint(
     summary="Create a new discussion room reservation",
     description="Validates input, checks for conflicts, and saves a confirmed discussion room booking to SQLite.",
 )
-def create_new_room_booking(payload: RoomBookingCreateRequest) -> RoomBookingResponse:
+def create_new_room_booking(
+    payload: RoomBookingCreateRequest,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+) -> RoomBookingResponse:
     """Create a new confirmed discussion room reservation."""
     # Validate start_time < end_time
     try:
@@ -307,10 +320,14 @@ def create_new_room_booking(payload: RoomBookingCreateRequest) -> RoomBookingRes
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+    effective_student_id = payload.student_id
+    if x_user_id and (not x_user_role or x_user_role.lower() not in ("administrator", "admin")):
+        effective_student_id = x_user_id.strip()
+
     # Create the reservation through our database operations module
     try:
         created = create_room_booking(
-            student_id=payload.student_id,
+            student_id=effective_student_id,
             student_name=payload.student_name,
             room_id=payload.room_id,
             booking_date=payload.booking_date,
@@ -367,16 +384,29 @@ def get_recommendations(
 @router.post(
     "/cancel",
     summary="Cancel a reservation",
-    description="Marks a booking or room reservation as cancelled.",
+    description="Marks a booking or room reservation as cancelled. Enforces ownership for students.",
 )
 def cancel_booking_endpoint(
     booking_id: int = Query(..., gt=0),
     service_type: str = Query("Laboratory", description="'Laboratory' or 'Library Room'"),
+    student_id: Optional[str] = Query(None, description="Owner student/user ID"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
 ):
     from app.database import cancel_reservation
-    success = cancel_reservation(booking_id=booking_id, service_type=service_type)
+    is_admin_req = bool(x_user_role and x_user_role.lower() in ("administrator", "admin"))
+    owner = (x_user_id or student_id or "").strip() or None
+    success = cancel_reservation(
+        booking_id=booking_id,
+        service_type=service_type,
+        owner_id=owner,
+        is_admin=is_admin_req,
+    )
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found or already cancelled.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Booking not found, already cancelled, or not owned by the authenticated user.",
+        )
     return {"status": "success", "message": f"Reservation #{booking_id} cancelled successfully."}
 
 
@@ -438,7 +468,17 @@ def upsert_user_profile_endpoint(payload: dict):
     summary="Get user-specific bookings",
     description="Retrieves confirmed and past reservations strictly for the requested student ID.",
 )
-def get_user_bookings_endpoint(user_id: str):
+def get_user_bookings_endpoint(
+    user_id: str,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+):
+    is_admin_req = bool(x_user_role and x_user_role.lower() in ("administrator", "admin"))
+    if x_user_id and not is_admin_req and x_user_id.strip() != user_id.strip():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Students may only view their own bookings.",
+        )
     from app.database import get_all_student_reservations
     return get_all_student_reservations(student_id=user_id)
 
@@ -492,8 +532,8 @@ def auth_login_endpoint(payload: dict):
 
 @router.post(
     "/auth/register",
-    summary="Student account registration",
-    description="Registers a new verified student account (enforcing Student role isolation).",
+    summary="User account registration",
+    description="Registers a new verified student or administrator account with salted password hashing.",
     tags=["Authentication"],
 )
 def auth_register_endpoint(payload: dict):
@@ -502,7 +542,7 @@ def auth_register_endpoint(payload: dict):
         email=payload.get("email", ""),
         password=payload.get("password", ""),
         full_name=payload.get("full_name", ""),
-        account_type="Student",  # Strictly Student
+        account_type=payload.get("account_type", "Student"),
         student_id=payload.get("student_id", ""),
         university=payload.get("university", "Lovely Professional University"),
         department=payload.get("department", "Computer Science & Engineering"),
@@ -643,6 +683,43 @@ def get_student_leaves_endpoint(student_id: str):
 def get_all_leaves_endpoint():
     from app.database import get_all_leave_requests
     return get_all_leave_requests()
+
+
+@router.post(
+    "/admin/leaves/{leave_id}/approve",
+    summary="Approve a student leave request",
+    description="Approves a pending student leave request in SQLite.",
+)
+def approve_leave_endpoint(
+    leave_id: int,
+    admin_auth: dict = Depends(verify_admin_authorization),
+):
+    from app.database import update_leave_status
+    reviewer = admin_auth.get("full_name") or admin_auth.get("email") or "Faculty Administrator"
+    ok = update_leave_status(leave_id=leave_id, status="Approved", reviewed_by=reviewer)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Leave request not found.")
+    return {"status": "approved", "leave_id": leave_id, "reviewed_by": reviewer}
+
+
+@router.post(
+    "/admin/leaves/{leave_id}/reject",
+    summary="Reject a student leave request",
+    description="Rejects a pending student leave request and records the documented rejection reason.",
+)
+def reject_leave_endpoint(
+    leave_id: int,
+    payload: Optional[dict] = None,
+    admin_auth: dict = Depends(verify_admin_authorization),
+):
+    from app.database import update_leave_status
+    reason = (payload or {}).get("rejection_reason", "Declined by department administrator")
+    reviewer = admin_auth.get("full_name") or admin_auth.get("email") or "Faculty Administrator"
+    ok = update_leave_status(leave_id=leave_id, status="Rejected", rejection_reason=reason, reviewed_by=reviewer)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Leave request not found.")
+    return {"status": "rejected", "leave_id": leave_id, "rejection_reason": reason, "reviewed_by": reviewer}
+
 
 
 

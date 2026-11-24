@@ -42,6 +42,7 @@ load_dotenv()
 
 from langchain_core.messages import AIMessage, HumanMessage
 from app.agent.booking_agent import CampusBookingAgent
+from app.agent.autonomous_assistant import AutonomousAssistant
 from app.database.operations import (
     approve_booking,
     cancel_reservation,
@@ -119,19 +120,22 @@ if "messages" not in st.session_state:
         {
             "role": "assistant",
             "content": (
-                "👋 **Hi! I'm CampusPilot AI.** Tell me what you need, and I'll help you find and reserve the right campus facility.\n\n"
-                "**Here is what I can do for you:**\n"
-                "• **Find available laboratories** based on class size, date, and time slot.\n"
-                "• **Find library discussion rooms** for collaborative study or team projects.\n"
-                "• **Check facility capacity & hardware** (GPUs, workstations, whiteboards).\n"
-                "• **Recommend the best available match** and prevent double-booking conflicts.\n"
-                "• **Securely submit your reservation request** with instant tracking `#ID`.\n\n"
-                "Try clicking a prompt chip above or type in natural language below!"
+                "Hello! I'm your CampusPilot AI assistant. What would you like to do today?\n\n"
+                "You can type your request naturally, or click any of the operation shortcuts above:\n"
+                "- **Book a Laboratory** (AI Lab, Computer Lab, Networking Lab)\n"
+                "- **Book a Discussion Room** (Instant self-service study rooms)\n"
+                "- **Check Availability** (Live real-time conflict verification in SQLite)\n"
+                "- **View My Bookings** (Check status of your approved and pending requests)\n"
+                "- **Submit a Leave Request** (Academic and medical leave applications)\n"
+                "- **Campus Facility Information** (Hardware specs, capacity, and block locations)"
             ),
             "steps": [],
             "recommendations": [],
         }
     ]
+
+if "ai_conversation_state" not in st.session_state:
+    st.session_state.ai_conversation_state = {}
 
 if "langchain_history" not in st.session_state:
     st.session_state.langchain_history = []
@@ -879,6 +883,15 @@ if st.session_state.authenticated_user is None:
                 )
 
                 admin_default_email = os.getenv("ADMIN_EMAIL", "admin@campus.edu")
+                st.markdown(
+                    clean_html(f"""
+                    <div style="margin-bottom: 0.85rem; padding: 0.65rem 0.85rem; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; font-size: 0.82rem; color: #475569; line-height: 1.5;">
+                        🛡️ <b>Administrator Portal:</b><br>
+                        Sign in with institutional administrator credentials (e.g. <code>admin@campus.edu</code>).
+                    </div>
+                    """),
+                    unsafe_allow_html=True,
+                )
                 admin_email = st.text_input(
                     "Administrator Email",
                     value=admin_default_email,
@@ -938,138 +951,269 @@ if st.session_state.authenticated_user is None:
                                 st.error(res)
 
         # ======================================================================
-        # TAB 2: CREATE ACCOUNT (STUDENT REGISTRATION ONLY)
+        # TAB 2: CREATE ACCOUNT (STUDENT & ADMINISTRATOR REGISTRATION)
         # ======================================================================
         with tab_create:
-            st.markdown(
-                clean_html(f"""
-                <div style="margin-top: 0.35rem; margin-bottom: 1.1rem;">
-                    <h2 style="font-size: 1.35rem; font-weight: 800; color: #0F172A; margin: 0 0 0.25rem 0;">
-                        📝 Register Student Account
-                    </h2>
-                    <p style="font-size: 0.84rem; color: #64748B; margin: 0;">
-                        Create your verified student profile to book labs, study rooms, and submit leave requests:
-                    </p>
-                </div>
-                """),
-                unsafe_allow_html=True,
+            reg_account_type = st.radio(
+                "Select Registration Account Type",
+                ["👨‍🎓 Student Account", "🛡️ Administrator Account"],
+                horizontal=True,
+                key="create_account_role_radio",
             )
+            is_admin_reg = "Administrator" in reg_account_type
 
-            # Full Name
-            reg_fullname = st.text_input(
-                "Full Legal Name *",
-                placeholder="e.g. Divyanshu Verma",
-                key="create_fullname_input",
-            )
-
-            # University Email
-            reg_email = st.text_input(
-                "University Email *",
-                placeholder="e.g. divyanshu@campus.edu or student@lpu.in",
-                key="create_email_input",
-            )
-
-            # Student ID / Roll Number & Department
-            c_sid, c_dept = st.columns([1, 1.2])
-            with c_sid:
-                reg_student_id = st.text_input(
-                    "Student ID / Roll No *",
-                    placeholder="e.g. CS2026-088",
-                    key="create_studentid_input",
-                )
-            with c_dept:
-                reg_department = st.selectbox(
-                    "Department *",
-                    [
-                        "Computer Science & Engineering",
-                        "Artificial Intelligence & Data Science",
-                        "Electronics & Communication",
-                        "Information Technology",
-                        "Mechanical Engineering",
-                    ],
-                    key="create_dept_input",
-                )
-
-            # Passwords Row
-            c_pwd1, c_pwd2 = st.columns(2)
-            with c_pwd1:
-                reg_password = st.text_input(
-                    "Password *",
-                    type="default" if st.session_state.get("show_reg_pwd_check") else "password",
-                    placeholder="Create secure password",
-                    key="create_pwd_input",
-                )
-            with c_pwd2:
-                reg_confirm_password = st.text_input(
-                    "Confirm Password *",
-                    type="default" if st.session_state.get("show_reg_pwd_check") else "password",
-                    placeholder="Re-enter password",
-                    key="create_pwd_confirm_input",
-                )
-
-            st.checkbox("Show passwords", key="show_reg_pwd_check")
-
-            # Password Requirement Indicators
-            p_len = len(reg_password) >= 8
-            p_up = bool(re.search(r"[A-Z]", reg_password))
-            p_low = bool(re.search(r"[a-z]", reg_password))
-            p_num = bool(re.search(r"\d", reg_password))
-
-            color_ok = "#059669"
-            color_mute = "#94A3B8"
-
-            st.markdown(
-                clean_html(f"""
-                <div style="margin: 0.5rem 0 0.9rem 0; padding: 0.75rem 0.9rem; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px;">
-                    <div style="font-size: 0.74rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.4rem;">
-                        Password Security Checklist:
+            if not is_admin_reg:
+                # --------------------------------------------------------------
+                # STUDENT REGISTRATION
+                # --------------------------------------------------------------
+                st.markdown(
+                    clean_html(f"""
+                    <div style="margin-top: 0.35rem; margin-bottom: 1.1rem;">
+                        <h2 style="font-size: 1.35rem; font-weight: 800; color: #0F172A; margin: 0 0 0.25rem 0;">
+                            📝 Register Student Account
+                        </h2>
+                        <p style="font-size: 0.84rem; color: #64748B; margin: 0;">
+                            Create your verified student profile to book labs, study rooms, and submit leave requests:
+                        </p>
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; font-size: 0.75rem;">
-                        <div style="color: {color_ok if p_len else color_mute}; font-weight: 600;">{'✓' if p_len else '○'} 8+ Characters</div>
-                        <div style="color: {color_ok if p_up else color_mute}; font-weight: 600;">{'✓' if p_up else '○'} Uppercase Letter (A-Z)</div>
-                        <div style="color: {color_ok if p_low else color_mute}; font-weight: 600;">{'✓' if p_low else '○'} Lowercase Letter (a-z)</div>
-                        <div style="color: {color_ok if p_num else color_mute}; font-weight: 600;">{'✓' if p_num else '○'} Number (0-9)</div>
+                    """),
+                    unsafe_allow_html=True,
+                )
+
+                # Full Name
+                reg_fullname = st.text_input(
+                    "Full Legal Name *",
+                    placeholder="e.g. Divyanshu Verma",
+                    key="create_fullname_input",
+                )
+
+                # University Email
+                reg_email = st.text_input(
+                    "University Email *",
+                    placeholder="e.g. divyanshu@campus.edu or student@lpu.in",
+                    key="create_email_input",
+                )
+
+                # Student ID / Roll Number & Department
+                c_sid, c_dept = st.columns([1, 1.2])
+                with c_sid:
+                    reg_student_id = st.text_input(
+                        "Student ID / Roll No *",
+                        placeholder="e.g. CS2026-088",
+                        key="create_studentid_input",
+                    )
+                with c_dept:
+                    reg_department = st.selectbox(
+                        "Department *",
+                        [
+                            "Computer Science & Engineering",
+                            "Artificial Intelligence & Data Science",
+                            "Electronics & Communication",
+                            "Information Technology",
+                            "Mechanical Engineering",
+                        ],
+                        key="create_dept_input",
+                    )
+
+                # Passwords Row
+                c_pwd1, c_pwd2 = st.columns(2)
+                with c_pwd1:
+                    reg_password = st.text_input(
+                        "Password *",
+                        type="default" if st.session_state.get("show_reg_pwd_check") else "password",
+                        placeholder="Create secure password",
+                        key="create_pwd_input",
+                    )
+                with c_pwd2:
+                    reg_confirm_password = st.text_input(
+                        "Confirm Password *",
+                        type="default" if st.session_state.get("show_reg_pwd_check") else "password",
+                        placeholder="Re-enter password",
+                        key="create_pwd_confirm_input",
+                    )
+
+                st.checkbox("Show passwords", key="show_reg_pwd_check")
+
+                # Password Requirement Indicators
+                p_len = len(reg_password) >= 8
+                p_up = bool(re.search(r"[A-Z]", reg_password))
+                p_low = bool(re.search(r"[a-z]", reg_password))
+                p_num = bool(re.search(r"\d", reg_password))
+
+                color_ok = "#059669"
+                color_mute = "#94A3B8"
+
+                st.markdown(
+                    clean_html(f"""
+                    <div style="margin: 0.5rem 0 0.9rem 0; padding: 0.75rem 0.9rem; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px;">
+                        <div style="font-size: 0.74rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.4rem;">
+                            Password Security Checklist:
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; font-size: 0.75rem;">
+                            <div style="color: {color_ok if p_len else color_mute}; font-weight: 600;">{'✓' if p_len else '○'} 8+ Characters</div>
+                            <div style="color: {color_ok if p_up else color_mute}; font-weight: 600;">{'✓' if p_up else '○'} Uppercase Letter (A-Z)</div>
+                            <div style="color: {color_ok if p_low else color_mute}; font-weight: 600;">{'✓' if p_low else '○'} Lowercase Letter (a-z)</div>
+                            <div style="color: {color_ok if p_num else color_mute}; font-weight: 600;">{'✓' if p_num else '○'} Number (0-9)</div>
+                        </div>
                     </div>
-                </div>
-                """),
-                unsafe_allow_html=True,
-            )
+                    """),
+                    unsafe_allow_html=True,
+                )
 
-            # Terms and Conditions
-            reg_terms = st.checkbox(
-                "I agree to the University Campus Facilities Policy & Terms of Service *",
-                value=False,
-                key="create_terms_check",
-            )
+                # Terms and Conditions
+                reg_terms = st.checkbox(
+                    "I agree to the University Campus Facilities Policy & Terms of Service *",
+                    value=False,
+                    key="create_terms_check",
+                )
 
-            # Prominent Full-Width Crimson Create Account Button (Strictly Student Role)
-            btn_create = st.button("🚀 Create Student Account & Enter Dashboard", type="primary", use_container_width=True, key="btn_create_submit")
+                # Prominent Full-Width Crimson Create Account Button (Strictly Student Role)
+                btn_create = st.button("🚀 Create Student Account & Enter Dashboard", type="primary", use_container_width=True, key="btn_create_submit")
 
-            if btn_create:
-                if not reg_fullname.strip() or not reg_email.strip() or not reg_password:
-                    st.error("Please fill in all required fields marked with *.")
-                elif not reg_terms:
-                    st.error("Please accept the Terms of Service to create an account.")
-                elif reg_password != reg_confirm_password:
-                    st.error("Passwords do not match. Please re-enter identical passwords.")
-                else:
-                    with st.spinner("Creating your verified student account..."):
-                        reg_ok, reg_res = register_user(
-                            email=reg_email.strip(),
-                            password=reg_password,
-                            full_name=reg_fullname.strip(),
-                            account_type="Student",  # Strictly locked to Student
-                            student_id=reg_student_id.strip(),
-                            department=reg_department.strip(),
-                        )
-                        if reg_ok:
-                            st.session_state.authenticated_user = reg_res
-                            st.session_state.current_page = None
-                            st.success(f"🎉 Welcome to CampusPilot AI, {reg_res['full_name']}!")
-                            time.sleep(0.4)
-                            st.rerun()
-                        else:
-                            st.error(reg_res)
+                if btn_create:
+                    if not reg_fullname.strip() or not reg_email.strip() or not reg_password:
+                        st.error("Please fill in all required fields marked with *.")
+                    elif not reg_terms:
+                        st.error("Please accept the Terms of Service to create an account.")
+                    elif reg_password != reg_confirm_password:
+                        st.error("Passwords do not match. Please re-enter identical passwords.")
+                    else:
+                        with st.spinner("Creating your verified student account..."):
+                            reg_ok, reg_res = register_user(
+                                email=reg_email.strip(),
+                                password=reg_password,
+                                full_name=reg_fullname.strip(),
+                                account_type="Student",  # Strictly locked to Student
+                                student_id=reg_student_id.strip(),
+                                department=reg_department.strip(),
+                            )
+                            if reg_ok:
+                                st.session_state.authenticated_user = reg_res
+                                st.session_state.current_page = None
+                                st.success(f"🎉 Welcome to CampusPilot AI, {reg_res['full_name']}!")
+                                time.sleep(0.4)
+                                st.rerun()
+                            else:
+                                st.error(reg_res)
+
+            else:
+                # --------------------------------------------------------------
+                # ADMINISTRATOR REGISTRATION
+                # --------------------------------------------------------------
+                st.markdown(
+                    clean_html(f"""
+                    <div style="margin-top: 0.35rem; margin-bottom: 1.1rem;">
+                        <h2 style="font-size: 1.35rem; font-weight: 800; color: #0F172A; margin: 0 0 0.25rem 0;">
+                            🛡️ Register Administrator Account
+                        </h2>
+                        <p style="font-size: 0.84rem; color: #64748B; margin: 0;">
+                            Create an authorized faculty or administrator account to manage campus facilities and review student bookings:
+                        </p>
+                    </div>
+                    """),
+                    unsafe_allow_html=True,
+                )
+
+                # Full Name
+                reg_admin_fullname = st.text_input(
+                    "Full Legal Name *",
+                    placeholder="e.g. Dr. Rajesh Sharma",
+                    key="create_admin_fullname_input",
+                )
+
+                # Administrator Email
+                reg_admin_email = st.text_input(
+                    "Administrator Email *",
+                    placeholder="e.g. rajesh.sharma@campus.edu",
+                    key="create_admin_email_input",
+                )
+
+                # Department / Designation & Employee ID
+                c_adept, c_aempid = st.columns([1.2, 1])
+                with c_adept:
+                    reg_admin_dept = st.text_input(
+                        "Department / Designation *",
+                        placeholder="e.g. Computer Science / HOD or Operations",
+                        key="create_admin_dept_input",
+                    )
+                with c_aempid:
+                    reg_admin_empid = st.text_input(
+                        "Faculty / Employee ID (Optional)",
+                        placeholder="e.g. FAC2026-102",
+                        key="create_admin_empid_input",
+                    )
+
+                # Passwords Row
+                c_apwd1, c_apwd2 = st.columns(2)
+                with c_apwd1:
+                    reg_admin_pwd = st.text_input(
+                        "Password *",
+                        type="default" if st.session_state.get("show_admin_reg_pwd_check") else "password",
+                        placeholder="Create secure password",
+                        key="create_admin_pwd_input",
+                    )
+                with c_apwd2:
+                    reg_admin_pwd_confirm = st.text_input(
+                        "Confirm Password *",
+                        type="default" if st.session_state.get("show_admin_reg_pwd_check") else "password",
+                        placeholder="Re-enter password",
+                        key="create_admin_pwd_confirm_input",
+                    )
+
+                st.checkbox("Show passwords", key="show_admin_reg_pwd_check")
+
+                # Password Requirement Indicators
+                ap_len = len(reg_admin_pwd) >= 8
+                ap_up = bool(re.search(r"[A-Z]", reg_admin_pwd))
+                ap_low = bool(re.search(r"[a-z]", reg_admin_pwd))
+                ap_num = bool(re.search(r"\d", reg_admin_pwd))
+
+                color_ok = "#059669"
+                color_mute = "#94A3B8"
+
+                st.markdown(
+                    clean_html(f"""
+                    <div style="margin: 0.5rem 0 0.9rem 0; padding: 0.75rem 0.9rem; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px;">
+                        <div style="font-size: 0.74rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.4rem;">
+                            Password Security Checklist:
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; font-size: 0.75rem;">
+                            <div style="color: {color_ok if ap_len else color_mute}; font-weight: 600;">{'✓' if ap_len else '○'} 8+ Characters</div>
+                            <div style="color: {color_ok if ap_up else color_mute}; font-weight: 600;">{'✓' if ap_up else '○'} Uppercase Letter (A-Z)</div>
+                            <div style="color: {color_ok if ap_low else color_mute}; font-weight: 600;">{'✓' if ap_low else '○'} Lowercase Letter (a-z)</div>
+                            <div style="color: {color_ok if ap_num else color_mute}; font-weight: 600;">{'✓' if ap_num else '○'} Number (0-9)</div>
+                        </div>
+                    </div>
+                    """),
+                    unsafe_allow_html=True,
+                )
+
+                # Prominent Full-Width Crimson Create Admin Button
+                btn_create_admin = st.button("🛡️ Create Administrator Account & Enter Portal", type="primary", use_container_width=True, key="btn_create_admin_submit")
+
+                if btn_create_admin:
+                    if not reg_admin_fullname.strip() or not reg_admin_email.strip() or not reg_admin_pwd or not reg_admin_dept.strip():
+                        st.error("Please fill in all required fields marked with *.")
+                    elif reg_admin_pwd != reg_admin_pwd_confirm:
+                        st.error("Passwords do not match. Please re-enter identical passwords.")
+                    else:
+                        with st.spinner("Creating verified administrator account..."):
+                            reg_ok, reg_res = register_user(
+                                email=reg_admin_email.strip(),
+                                password=reg_admin_pwd,
+                                full_name=reg_admin_fullname.strip(),
+                                account_type="Administrator",
+                                student_id=reg_admin_empid.strip(),
+                                department=reg_admin_dept.strip(),
+                            )
+                            if reg_ok:
+                                st.session_state.authenticated_user = reg_res
+                                st.session_state.current_page = "🛡️ Admin Dashboard"
+                                st.success(f"🎉 Administrator account created! Welcome, {reg_res['full_name']}.")
+                                time.sleep(0.4)
+                                st.rerun()
+                            else:
+                                st.error(reg_res)
 
             st.markdown(
                 clean_html(f"""
@@ -1087,7 +1231,12 @@ if st.session_state.authenticated_user is None:
 # DYNAMIC STUDENT / ADMIN IDENTITY RESOLUTION
 # ==============================================================================
 auth_user = st.session_state.authenticated_user
-user_id = str(auth_user.get("student_id") or auth_user.get("user_id") or "CS2026-001").strip()
+# Always use the authenticated user's globally unique user_id as the ownership key
+# (never fall back to non-unique roll numbers or hardcoded IDs).
+user_id = str(auth_user.get("user_id") or "").strip()
+if not user_id:
+    user_id = str(auth_user.get("email") or "").strip().lower()
+roll_number = str(auth_user.get("student_id") or user_id).strip()
 account_type = auth_user.get("account_type", "Student")
 is_admin = account_type == "Administrator"
 student_email = auth_user.get("email", "student@campus.edu")
@@ -1121,71 +1270,38 @@ def confirm_pending_booking():
         return
 
     st.session_state.pending_booking = None
-    service_type = pending.get("service_type", "lab")
+    st.session_state.ai_conversation_state = {}
+    # Force authenticated session ownership before persisting
+    pending["student_id"] = user_id
+    pending["student_name"] = student_name
 
     with st.spinner("Recording confirmed reservation in campus database..."):
-        try:
-            if service_type == "room":
-                res_output = create_room_reservation.invoke({
-                    "student_id": user_id,
-                    "student_name": student_name,
-                    "room_id": int(pending["item_id"]),
-                    "booking_date": pending["booking_date"],
-                    "start_time": pending["start_time"],
-                    "end_time": pending["end_time"],
-                })
-                tool_used = "create_room_reservation"
-                facility_label = "Library Discussion Room"
-            else:
-                res_output = create_lab_booking.invoke({
-                    "student_id": user_id,
-                    "student_name": student_name,
-                    "lab_id": int(pending["item_id"]),
-                    "booking_date": pending["booking_date"],
-                    "start_time": pending["start_time"],
-                    "end_time": pending["end_time"],
-                })
-                tool_used = "create_lab_booking"
-                facility_label = "Campus Laboratory"
+        ok, res_output, booking_id = AutonomousAssistant.execute_booking(pending)
 
-            booking_id_match = re.search(r"Booking ID:\s*(\d+)", res_output)
-            booking_id_val = booking_id_match.group(1) if booking_id_match else "CONFIRMED"
+        if ok and is_smtp_configured() and booking_id:
+            try:
+                facility_label = "Campus Laboratory" if pending.get("service_type") == "lab" else "Library Discussion Room"
+                send_booking_confirmation_email(
+                    recipient_email=student_email,
+                    recipient_name=student_name,
+                    facility_name=pending["item_name"],
+                    booking_date=pending["booking_date"],
+                    start_time=pending["start_time"],
+                    end_time=pending["end_time"],
+                    booking_id=str(booking_id),
+                    facility_type=facility_label,
+                )
+            except Exception as mail_err:
+                print(f"[Email Notification Note] {mail_err}")
 
-            if is_smtp_configured():
-                try:
-                    send_booking_confirmation_email(
-                        recipient_email=student_email,
-                        recipient_name=student_name,
-                        facility_name=pending["item_name"],
-                        booking_date=pending["booking_date"],
-                        start_time=pending["start_time"],
-                        end_time=pending["end_time"],
-                        booking_id=booking_id_val,
-                        facility_type=facility_label,
-                    )
-                except Exception as mail_err:
-                    print(f"[Email Notification Note] {mail_err}")
-
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": res_output,
-                    "steps": [
-                        {
-                            "tool": tool_used,
-                            "args": pending,
-                            "observation": res_output,
-                        }
-                    ],
-                    "recommendations": [],
-                }
-            )
-            st.session_state.langchain_history.append(AIMessage(content=res_output))
-
-        except Exception as e:
-            err_msg = f"Failed to confirm reservation: {str(e)}"
-            st.session_state.messages.append({"role": "assistant", "content": err_msg, "steps": [], "recommendations": []})
-            st.session_state.langchain_history.append(AIMessage(content=err_msg))
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": res_output,
+                "steps": [],
+                "recommendations": [],
+            }
+        )
 
 
 def process_user_input(user_text: str):
@@ -1201,14 +1317,12 @@ def process_user_input(user_text: str):
 
     if st.session_state.pending_booking and lower_input in ("cancel", "no", "stop"):
         st.session_state.pending_booking = None
+        st.session_state.ai_conversation_state = {}
         cancel_text = "The pending reservation request was cancelled."
         st.session_state.messages.append({"role": "assistant", "content": cancel_text, "steps": [], "recommendations": []})
-        st.session_state.langchain_history.append(AIMessage(content=cancel_text))
         return
 
-    anchored_text = resolve_relative_dates_in_text(clean_text)
     st.session_state.messages.append({"role": "user", "content": clean_text, "steps": [], "recommendations": []})
-    st.session_state.langchain_history.append(HumanMessage(content=anchored_text))
 
     student_ctx = {
         "student_name": student_name,
@@ -1216,30 +1330,31 @@ def process_user_input(user_text: str):
         "student_email": student_email,
     }
 
+    if "ai_conversation_state" not in st.session_state:
+        st.session_state.ai_conversation_state = {}
+
     try:
-        agent = get_agent()
         with st.spinner("CampusPilot AI is analyzing your inquiry and consulting campus tools..."):
-            result = agent.run(
-                messages=st.session_state.langchain_history,
+            turn_result = AutonomousAssistant.process_turn(
+                user_text=clean_text,
+                current_state=st.session_state.ai_conversation_state,
                 student_context=student_ctx,
             )
 
-        assistant_text = result["response"]
-        steps = result.get("steps", [])
-        recommendations = result.get("recommendations", [])
+        st.session_state.ai_conversation_state = turn_result.get("state", {})
+        assistant_text = turn_result.get("reply", "")
 
         st.session_state.messages.append(
             {
                 "role": "assistant",
                 "content": assistant_text,
-                "steps": steps,
-                "recommendations": recommendations,
+                "steps": [],
+                "recommendations": [],
             }
         )
-        st.session_state.langchain_history.append(AIMessage(content=assistant_text))
 
-        if result.get("pending_booking"):
-            pending = result["pending_booking"]
+        if turn_result.get("pending_booking"):
+            pending = turn_result["pending_booking"]
             pending["student_id"] = user_id
             pending["student_name"] = student_name
             st.session_state.pending_booking = pending
@@ -1249,7 +1364,6 @@ def process_user_input(user_text: str):
     except Exception as exc:
         err_msg = f"An unexpected error occurred: {str(exc)}"
         st.session_state.messages.append({"role": "assistant", "content": err_msg, "steps": [], "recommendations": []})
-        st.session_state.langchain_history.append(AIMessage(content=err_msg))
 
 
 # ==============================================================================
@@ -1411,122 +1525,444 @@ rooms = get_all_discussion_rooms()
 # ADMIN VIEW 1: 🛡️ ADMIN DASHBOARD
 # ------------------------------------------------------------------------------
 if is_admin and st.session_state.current_page == "🛡️ Admin Dashboard":
-    metrics = get_admin_dashboard_metrics()
-
     st.markdown(
         clean_html(f"""
         <div class="hero-banner">
             <h2 class="hero-title">Faculty Administrator Portal — {student_name} 🛡️</h2>
             <p class="hero-subtitle">
                 Departmental facility oversight, student booking approval queues, and facility operational controls.
-                Real-time metrics computed directly from SQLite database.
+                Real-time metrics and incoming requests sync automatically from SQLite every 5 seconds.
             </p>
         </div>
         """),
         unsafe_allow_html=True,
     )
 
-    # 4 Metric Cards
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(
-            clean_html(f"""
-            <div class="stat-card">
-                <div class="stat-header">
-                    <span class="stat-label">Pending Requests</span>
-                    <span class="stat-icon">⏳</span>
-                </div>
-                <div class="stat-value" style="color: {'#DC2626' if metrics['pending_requests'] > 0 else '#0F172A'};">{metrics['pending_requests']}</div>
-                <div class="stat-footer" style="color: #D97706;">
-                    <span>● Requires Review</span>
-                </div>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-    with c2:
-        st.markdown(
-            clean_html(f"""
-            <div class="stat-card">
-                <div class="stat-header">
-                    <span class="stat-label">Approved Bookings</span>
-                    <span class="stat-icon">✅</span>
-                </div>
-                <div class="stat-value">{metrics['approved_requests']}</div>
-                <div class="stat-footer" style="color: #059669;">
-                    <span>● Confirmed in Schedule</span>
-                </div>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-    with c3:
-        st.markdown(
-            clean_html(f"""
-            <div class="stat-card">
-                <div class="stat-header">
-                    <span class="stat-label">Rejected Requests</span>
-                    <span class="stat-icon">❌</span>
-                </div>
-                <div class="stat-value">{metrics['rejected_requests']}</div>
-                <div class="stat-footer" style="color: #DC2626;">
-                    <span>● With Documented Reason</span>
-                </div>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-    with c4:
-        st.markdown(
-            clean_html(f"""
-            <div class="stat-card">
-                <div class="stat-header">
-                    <span class="stat-label">Active Facilities</span>
-                    <span class="stat-icon">🏢</span>
-                </div>
-                <div class="stat-value">{metrics['active_laboratories'] + metrics['active_rooms']}</div>
-                <div class="stat-footer" style="color: #059669;">
-                    <span>● {metrics['active_laboratories']} Labs &bull; {metrics['active_rooms']} Rooms</span>
-                </div>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
+    @st.fragment(run_every="5s")
+    def render_live_admin_dashboard():
+        metrics = get_admin_dashboard_metrics()
+        all_pending_raw = get_all_booking_requests(status_filter="pending")
+        seen_all_pending = set()
+        all_pending_deduped = []
+        for r in all_pending_raw:
+            if r["booking_id"] not in seen_all_pending:
+                seen_all_pending.add(r["booking_id"])
+                all_pending_deduped.append(r)
 
-    st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
+        all_leaves_raw = get_all_leave_requests()
+        seen_all_leaves = set()
+        all_leaves_deduped = []
+        for l in all_leaves_raw:
+            if l["leave_id"] not in seen_all_leaves:
+                seen_all_leaves.add(l["leave_id"])
+                all_leaves_deduped.append(l)
 
-    # Quick Jump to Pending Queue
-    if metrics["pending_requests"] > 0:
-        st.warning(f"⚠️ You have **{metrics['pending_requests']} student booking request(s)** awaiting administrative review.")
-        if st.button("👉 Open Pending Requests Queue", type="primary", key="btn_dash_open_pending"):
-            st.session_state.current_page = "📥 Booking Requests"
-            st.rerun()
+        pending_leaves = [l for l in all_leaves_deduped if "pending" in (l.get("status") or "").lower()]
 
-    st.markdown("---")
-    st.markdown("#### 📋 Recent Booking Submissions Across Campus")
+        # Detect newly submitted requests since last poll
+        current_bids = {r["booking_id"] for r in all_pending_deduped}
+        current_lids = {l["leave_id"] for l in pending_leaves}
 
-    recent_requests = get_all_booking_requests()[:6]
-    if recent_requests:
-        for r in recent_requests:
-            stat = r.get("status", "pending")
-            badge = "badge-live" if stat in ("approved", "confirmed") else ("badge-rejected" if stat == "rejected" else "badge-pending")
+        if "admin_known_pending_bids" not in st.session_state:
+            st.session_state.admin_known_pending_bids = current_bids
+            st.session_state.admin_new_alert_bids = set()
+        else:
+            newly_arrived_bids = current_bids - st.session_state.admin_known_pending_bids
+            if newly_arrived_bids:
+                st.session_state.admin_new_alert_bids = (
+                    st.session_state.get("admin_new_alert_bids", set()) | newly_arrived_bids
+                ) & current_bids
+                st.toast(f"🔔 {len(newly_arrived_bids)} new lab booking request(s) received!", icon="🔔")
+            else:
+                st.session_state.admin_new_alert_bids = st.session_state.get("admin_new_alert_bids", set()) & current_bids
+            st.session_state.admin_known_pending_bids = current_bids
+
+        if "admin_known_pending_lids" not in st.session_state:
+            st.session_state.admin_known_pending_lids = current_lids
+            st.session_state.admin_new_alert_lids = set()
+        else:
+            newly_arrived_lids = current_lids - st.session_state.admin_known_pending_lids
+            if newly_arrived_lids:
+                st.session_state.admin_new_alert_lids = (
+                    st.session_state.get("admin_new_alert_lids", set()) | newly_arrived_lids
+                ) & current_lids
+                st.toast(f"🔔 {len(newly_arrived_lids)} new student leave request(s) received!", icon="🏖️")
+            else:
+                st.session_state.admin_new_alert_lids = st.session_state.get("admin_new_alert_lids", set()) & current_lids
+            st.session_state.admin_known_pending_lids = current_lids
+
+        new_bids_alert = st.session_state.get("admin_new_alert_bids", set())
+        new_lids_alert = st.session_state.get("admin_new_alert_lids", set())
+        last_sync_str = datetime.now().strftime("%H:%M:%S")
+
+        # Live Sync Status Bar
+        col_sync_info, col_sync_btn = st.columns([4.2, 1.0])
+        with col_sync_info:
             st.markdown(
                 clean_html(f"""
-                <div class="booking-row">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
-                        <span style="font-weight: 700; font-size: 0.95rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({r['service_type']})</span></span>
-                        <span class="{badge}">{stat.upper()} &bull; #{r['booking_id']}</span>
+                <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.45rem 0.85rem; background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; font-size: 0.82rem; color: #166534; margin-bottom: 0.75rem;">
+                    <span>🟢 <b>Live Auto-Sync Active</b> (Polling SQLite every 5s)</span>
+                    <span>&bull;</span>
+                    <span>⏱️ <b>Last updated:</b> <code>{last_sync_str}</code></span>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+        with col_sync_btn:
+            if st.button("🔄 Refresh Now", key="btn_admin_dash_refresh_now", use_container_width=True):
+                st.rerun()
+
+        if new_bids_alert or new_lids_alert:
+            total_new = len(new_bids_alert) + len(new_lids_alert)
+            st.info(f"🔔 **New Request Alert:** {total_new} newly submitted pending request(s) detected automatically! Look for the **🆕 NEW** badge below.")
+
+        # 4 Metric Cards
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown(
+                clean_html(f"""
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Pending Requests</span>
+                        <span class="stat-icon">⏳</span>
                     </div>
-                    <div style="font-size: 0.82rem; color: #64748B;">
-                        👤 <b>{r['student_name']}</b> ({r['student_id']}) &bull; 📅 {r['booking_date']} &bull; ⏰ {r['start_time']} - {r['end_time']}<br>
-                        🎯 <b>Purpose:</b> {r.get('purpose') or 'Academic / General Practical'}
+                    <div class="stat-value" style="color: {'#DC2626' if (metrics['pending_requests'] + metrics.get('pending_leaves', 0)) > 0 else '#0F172A'};">{metrics['pending_requests']}</div>
+                    <div class="stat-footer" style="color: #D97706;">
+                        <span>● {metrics['pending_requests']} Labs &bull; {metrics.get('pending_leaves', 0)} Leaves</span>
                     </div>
                 </div>
                 """),
                 unsafe_allow_html=True,
             )
-    else:
-        st.info("No booking requests recorded in the system yet.")
+        with c2:
+            st.markdown(
+                clean_html(f"""
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Approved Bookings</span>
+                        <span class="stat-icon">✅</span>
+                    </div>
+                    <div class="stat-value">{metrics['approved_requests']}</div>
+                    <div class="stat-footer" style="color: #059669;">
+                        <span>● Confirmed in Schedule</span>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+        with c3:
+            st.markdown(
+                clean_html(f"""
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Rejected Requests</span>
+                        <span class="stat-icon">❌</span>
+                    </div>
+                    <div class="stat-value">{metrics['rejected_requests']}</div>
+                    <div class="stat-footer" style="color: #DC2626;">
+                        <span>● With Documented Reason</span>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+        with c4:
+            st.markdown(
+                clean_html(f"""
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Active Facilities</span>
+                        <span class="stat-icon">🏢</span>
+                    </div>
+                    <div class="stat-value">{metrics['active_laboratories'] + metrics['active_rooms']}</div>
+                    <div class="stat-footer" style="color: #059669;">
+                        <span>● {metrics['active_laboratories']} Labs &bull; {metrics['active_rooms']} Rooms</span>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
+
+        # Quick Jump to Pending Queue
+        if metrics["pending_requests"] > 0:
+            st.warning(f"⚠️ You have **{metrics['pending_requests']} student booking request(s)** awaiting administrative review.")
+            if st.button("👉 Open Pending Requests Queue", type="primary", key="btn_dash_open_pending"):
+                st.session_state.current_page = "📥 Booking Requests"
+                st.rerun(scope="app")
+
+        st.markdown("---")
+        st.markdown("### 📋 Dedicated Facility & Leave Request Management")
+        st.caption("Manage laboratory bookings and student leave requests. Discussion rooms are self-service and excluded from admin approval queues.")
+
+        dash_tab_ai, dash_tab_pc, dash_tab_leave, dash_tab_appr, dash_tab_rej = st.tabs([
+            "🔬 Pending AI Lab Requests",
+            "💻 Pending Computer Lab Requests",
+            "🏖️ Pending Leave Requests",
+            "✅ Approved Requests",
+            "❌ Rejected Requests",
+        ])
+
+        # 1. PENDING AI LAB REQUESTS
+        with dash_tab_ai:
+            ai_pending = [r for r in all_pending_deduped if r.get("facility_id") == 2 or "ai lab" in r.get("facility_name", "").lower()]
+
+            if not ai_pending:
+                st.info("No pending AI Lab booking requests at this time.")
+            else:
+                st.markdown(f"**Found {len(ai_pending)} pending AI Lab request(s):**")
+                for r in ai_pending:
+                    b_id = r["booking_id"]
+                    dept_str = r.get("department") or "Engineering & Technology"
+                    new_badge = '<span style="background:#DBEAFE;color:#1D4ED8;padding:2px 7px;border-radius:999px;font-size:0.72rem;font-weight:700;margin-left:6px;">🆕 NEW</span>' if b_id in new_bids_alert else ""
+                    col_card, col_act = st.columns([3.2, 1.8])
+                    with col_card:
+                        st.markdown(
+                            clean_html(f"""
+                            <div class="content-card" style="margin-bottom: 0.75rem;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                                    <span style="font-weight: 800; font-size: 1.05rem;">{r['facility_name']}{new_badge}</span>
+                                    <span class="badge-pending">PENDING APPROVAL &bull; #{b_id}</span>
+                                </div>
+                                <div style="font-size: 0.84rem; color: #64748B; line-height: 1.55;">
+                                    👤 <b>Student:</b> {r['student_name']} &bull; <b>ID:</b> <code>{r['student_id']}</code> &bull; <b>Dept:</b> {dept_str}<br>
+                                    📅 <b>Date:</b> {r['booking_date']} &bull; ⏰ <b>Slot:</b> {r['start_time']} - {r['end_time']}<br>
+                                    🎯 <b>Purpose:</b> <i>{r.get('purpose') or 'Academic Capstone / Practical'}</i><br>
+                                    ⏱️ <b>Submitted:</b> {r.get('created_at') or 'Live Submission'}
+                                </div>
+                            </div>
+                            """),
+                            unsafe_allow_html=True,
+                        )
+                    with col_act:
+                        if st.button("✅ Approve AI Lab Request", key=f"approve_ai_lab_{b_id}", type="primary", use_container_width=True):
+                            ok, msg = approve_booking(b_id, "Laboratory")
+                            if ok:
+                                st.success(f"AI Lab Request #{b_id} Approved!")
+                                time.sleep(0.3)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                        with st.expander("❌ Reject Request"):
+                            rej_r = st.text_input("Rejection Reason:", value="Declined by department administrator", key=f"rejection_reason_ai_lab_{b_id}")
+                            if st.button("Confirm Rejection", key=f"reject_ai_lab_{b_id}", use_container_width=True):
+                                ok = reject_booking(b_id, "Laboratory", rejection_reason=rej_r)
+                                if ok:
+                                    st.warning(f"Request #{b_id} Rejected.")
+                                    time.sleep(0.3)
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to reject request. It may have already been processed.")
+
+        # 2. PENDING COMPUTER LAB REQUESTS
+        with dash_tab_pc:
+            pc_pending = [r for r in all_pending_deduped if r.get("facility_id") == 1 or "computer" in r.get("facility_name", "").lower()]
+
+            if not pc_pending:
+                st.info("No pending Computer Lab booking requests at this time.")
+            else:
+                st.markdown(f"**Found {len(pc_pending)} pending Computer Lab request(s):**")
+                for r in pc_pending:
+                    b_id = r["booking_id"]
+                    dept_str = r.get("department") or "Computer Science & Engineering"
+                    new_badge = '<span style="background:#DBEAFE;color:#1D4ED8;padding:2px 7px;border-radius:999px;font-size:0.72rem;font-weight:700;margin-left:6px;">🆕 NEW</span>' if b_id in new_bids_alert else ""
+                    col_card, col_act = st.columns([3.2, 1.8])
+                    with col_card:
+                        st.markdown(
+                            clean_html(f"""
+                            <div class="content-card" style="margin-bottom: 0.75rem;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                                    <span style="font-weight: 800; font-size: 1.05rem;">{r['facility_name']}{new_badge}</span>
+                                    <span class="badge-pending">PENDING APPROVAL &bull; #{b_id}</span>
+                                </div>
+                                <div style="font-size: 0.84rem; color: #64748B; line-height: 1.55;">
+                                    👤 <b>Student:</b> {r['student_name']} &bull; <b>ID:</b> <code>{r['student_id']}</code> &bull; <b>Dept:</b> {dept_str}<br>
+                                    📅 <b>Date:</b> {r['booking_date']} &bull; ⏰ <b>Slot:</b> {r['start_time']} - {r['end_time']}<br>
+                                    🎯 <b>Purpose:</b> <i>{r.get('purpose') or 'Practical / Programming Session'}</i><br>
+                                    ⏱️ <b>Submitted:</b> {r.get('created_at') or 'Live Submission'}
+                                </div>
+                            </div>
+                            """),
+                            unsafe_allow_html=True,
+                        )
+                    with col_act:
+                        if st.button("✅ Approve Computer Lab Request", key=f"approve_computer_lab_{b_id}", type="primary", use_container_width=True):
+                            ok, msg = approve_booking(b_id, "Laboratory")
+                            if ok:
+                                st.success(f"Computer Lab Request #{b_id} Approved!")
+                                time.sleep(0.3)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                        with st.expander("❌ Reject Request"):
+                            rej_r_pc = st.text_input("Rejection Reason:", value="Declined by department administrator", key=f"rejection_reason_computer_lab_{b_id}")
+                            if st.button("Confirm Rejection", key=f"reject_computer_lab_{b_id}", use_container_width=True):
+                                ok = reject_booking(b_id, "Laboratory", rejection_reason=rej_r_pc)
+                                if ok:
+                                    st.warning(f"Request #{b_id} Rejected.")
+                                    time.sleep(0.3)
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to reject request. It may have already been processed.")
+
+        # 3. PENDING LEAVE REQUESTS
+        with dash_tab_leave:
+            if not pending_leaves:
+                st.info("No pending student leave requests requiring review.")
+            else:
+                st.markdown(f"**Found {len(pending_leaves)} pending student leave request(s):**")
+                for l in pending_leaves:
+                    l_id = l["leave_id"]
+                    new_badge = '<span style="background:#DBEAFE;color:#1D4ED8;padding:2px 7px;border-radius:999px;font-size:0.72rem;font-weight:700;margin-left:6px;">🆕 NEW</span>' if l_id in new_lids_alert else ""
+                    col_lcard, col_lact = st.columns([3.2, 1.8])
+                    with col_lcard:
+                        st.markdown(
+                            clean_html(f"""
+                            <div class="content-card" style="margin-bottom: 0.75rem;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                                    <span style="font-weight: 800; font-size: 1.05rem;">{l['leave_type']}{new_badge}</span>
+                                    <span class="badge-pending">PENDING APPROVAL &bull; #{l_id}</span>
+                                </div>
+                                <div style="font-size: 0.84rem; color: #64748B; line-height: 1.55;">
+                                    👤 <b>Student:</b> {l['student_name']} &bull; <b>ID:</b> <code>{l['student_id']}</code> &bull; <b>Email:</b> {l['student_email']}<br>
+                                    📅 <b>Dates:</b> {l['start_date']} to {l['end_date']}<br>
+                                    📝 <b>Reason / Justification:</b> <i>{l['reason']}</i><br>
+                                    ⏱️ <b>Submitted:</b> {l.get('created_at') or 'Live Submission'}
+                                </div>
+                            </div>
+                            """),
+                            unsafe_allow_html=True,
+                        )
+                    with col_lact:
+                        if st.button("✅ Approve Leave Request", key=f"approve_leave_{l_id}", type="primary", use_container_width=True):
+                            ok = update_leave_status(l_id, "Approved", reviewed_by=student_name)
+                            if ok:
+                                st.success(f"Leave Request #{l_id} Approved!")
+                                time.sleep(0.3)
+                                st.rerun()
+                            else:
+                                st.error("Failed to approve leave request. It may have already been processed.")
+                        with st.expander("❌ Reject Leave"):
+                            l_rej_reason = st.text_input("Rejection Reason:", value="Declined per department attendance policy", key=f"rejection_reason_leave_{l_id}")
+                            if st.button("Confirm Leave Rejection", key=f"reject_leave_{l_id}", use_container_width=True):
+                                ok = update_leave_status(l_id, "Rejected", rejection_reason=l_rej_reason, reviewed_by=student_name)
+                                if ok:
+                                    st.warning(f"Leave Request #{l_id} Rejected.")
+                                    time.sleep(0.3)
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to reject leave request. It may have already been processed.")
+
+        # 4. APPROVED REQUESTS
+        with dash_tab_appr:
+            raw_appr = get_all_booking_requests(status_filter="approved")
+            seen_appr = set()
+            approved_bookings = []
+            for r in raw_appr:
+                if r["booking_id"] not in seen_appr:
+                    seen_appr.add(r["booking_id"])
+                    approved_bookings.append(r)
+
+            approved_leaves = [l for l in all_leaves_deduped if "approved" in (l.get("status") or "").lower()]
+
+            if not approved_bookings and not approved_leaves:
+                st.info("No approved requests found.")
+            else:
+                if approved_bookings:
+                    st.markdown("##### 🔬 Approved Laboratory Bookings")
+                    for r in approved_bookings:
+                        st.markdown(
+                            clean_html(f"""
+                            <div class="booking-row">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                                    <span style="font-weight: 700; font-size: 0.95rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({r['service_type']})</span></span>
+                                    <span class="badge-live">APPROVED &bull; #{r['booking_id']}</span>
+                                </div>
+                                <div style="font-size: 0.82rem; color: #64748B;">
+                                    👤 <b>{r['student_name']}</b> ({r['student_id']}) &bull; 📅 {r['booking_date']} &bull; ⏰ {r['start_time']} - {r['end_time']}<br>
+                                    🎯 <b>Purpose:</b> {r.get('purpose') or 'Academic Capstone / Practical'}
+                                </div>
+                            </div>
+                            """),
+                            unsafe_allow_html=True,
+                        )
+
+                if approved_leaves:
+                    st.markdown("##### 🏖️ Approved Leave Applications")
+                    for l in approved_leaves:
+                        st.markdown(
+                            clean_html(f"""
+                            <div class="booking-row">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                                    <span style="font-weight: 700; font-size: 0.95rem;">{l['leave_type']}</span>
+                                    <span class="badge-live">{l.get('status', 'Approved').upper()} &bull; #{l['leave_id']}</span>
+                                </div>
+                                <div style="font-size: 0.82rem; color: #64748B;">
+                                    👤 <b>{l['student_name']}</b> ({l['student_id']}) &bull; 📅 {l['start_date']} to {l['end_date']}<br>
+                                    📝 <b>Reason:</b> {l['reason']}<br>
+                                    🛡️ <b>Reviewed By:</b> {l.get('reviewed_by') or 'Faculty Administrator'}
+                                </div>
+                            </div>
+                            """),
+                            unsafe_allow_html=True,
+                        )
+
+        # 5. REJECTED REQUESTS
+        with dash_tab_rej:
+            raw_rej = get_all_booking_requests(status_filter="rejected")
+            seen_rej = set()
+            rejected_bookings = []
+            for r in raw_rej:
+                if r["booking_id"] not in seen_rej:
+                    seen_rej.add(r["booking_id"])
+                    rejected_bookings.append(r)
+
+            rejected_leaves = [l for l in all_leaves_deduped if "rejected" in (l.get("status") or "").lower()]
+
+            if not rejected_bookings and not rejected_leaves:
+                st.info("No rejected requests recorded.")
+            else:
+                if rejected_bookings:
+                    st.markdown("##### 🔬 Rejected Laboratory Bookings")
+                    for r in rejected_bookings:
+                        st.markdown(
+                            clean_html(f"""
+                            <div class="booking-row">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                                    <span style="font-weight: 700; font-size: 0.95rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({r['service_type']})</span></span>
+                                    <span class="badge-rejected">REJECTED &bull; #{r['booking_id']}</span>
+                                </div>
+                                <div style="font-size: 0.82rem; color: #64748B;">
+                                    👤 <b>{r['student_name']}</b> ({r['student_id']}) &bull; 📅 {r['booking_date']} &bull; ⏰ {r['start_time']} - {r['end_time']}<br>
+                                    ❌ <b>Documented Rejection Reason:</b> <span style="color: #DC2626; font-weight: 600;">{r.get('rejection_reason') or 'Declined by administrator'}</span>
+                                </div>
+                            </div>
+                            """),
+                            unsafe_allow_html=True,
+                        )
+
+                if rejected_leaves:
+                    st.markdown("##### 🏖️ Rejected Leave Applications")
+                    for l in rejected_leaves:
+                        st.markdown(
+                            clean_html(f"""
+                            <div class="booking-row">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                                    <span style="font-weight: 700; font-size: 0.95rem;">{l['leave_type']}</span>
+                                    <span class="badge-rejected">REJECTED &bull; #{l['leave_id']}</span>
+                                </div>
+                                <div style="font-size: 0.82rem; color: #64748B;">
+                                    👤 <b>{l['student_name']}</b> ({l['student_id']}) &bull; 📅 {l['start_date']} to {l['end_date']}<br>
+                                    ❌ <b>Rejection Reason:</b> <span style="color: #DC2626; font-weight: 600;">{l.get('rejection_reason') or 'Declined per policy'}</span><br>
+                                    🛡️ <b>Reviewed By:</b> {l.get('reviewed_by') or 'Faculty Administrator'}
+                                </div>
+                            </div>
+                            """),
+                            unsafe_allow_html=True,
+                        )
+
+    render_live_admin_dashboard()
 
 
 # ------------------------------------------------------------------------------
@@ -1536,95 +1972,107 @@ elif is_admin and st.session_state.current_page == "📥 Booking Requests":
     st.markdown("### 📥 Student Facility Booking Requests")
     st.caption("Review incoming student requests, verify schedule availability, and execute approvals or rejections with documented reasons:")
 
-    req_tab_all, req_tab_pending, req_tab_appr, req_tab_rej = st.tabs([
-        "All Requests",
-        "⏳ Pending Approval (Action Required)",
-        "✅ Approved",
-        "❌ Rejected",
-    ])
+    @st.fragment(run_every="5s")
+    def render_live_booking_requests_panel():
+        st.caption(f"🟢 Live Auto-Sync Active (every 5s) • Last updated: `{datetime.now().strftime('%H:%M:%S')}`")
+        req_tab_all, req_tab_pending, req_tab_appr, req_tab_rej = st.tabs([
+            "All Requests",
+            "⏳ Pending Approval (Action Required)",
+            "✅ Approved",
+            "❌ Rejected",
+        ])
 
-    def render_admin_request_list(status_filter=None, tab_key="all"):
-        requests_list = get_all_booking_requests(status_filter=status_filter)
-        if not requests_list:
-            st.info(f"No requests found matching filter: {status_filter or 'All'}.")
-            return
+        def render_admin_request_list(status_filter=None, tab_key="all"):
+            raw_list = get_all_booking_requests(status_filter=status_filter)
+            if not raw_list:
+                st.info(f"No requests found matching filter: {status_filter or 'All'}.")
+                return
 
-        for r in requests_list:
-            b_id = r["booking_id"]
-            s_type = r["service_type"]
-            cur_status = r.get("status", "pending")
-            status_badge = "badge-live" if cur_status in ("approved", "confirmed") else ("badge-rejected" if cur_status == "rejected" else "badge-pending")
+            seen_r_ids = set()
+            requests_list = []
+            for r in raw_list:
+                if r["booking_id"] not in seen_r_ids:
+                    seen_r_ids.add(r["booking_id"])
+                    requests_list.append(r)
 
-            col_card, col_action = st.columns([3.2, 1.8])
-            with col_card:
-                rejection_html = ""
-                if cur_status == "rejected" and r.get("rejection_reason"):
-                    rejection_html = f"""<div class="rejection-box"><b>Rejection Reason:</b> {r['rejection_reason']}</div>"""
+            for r in requests_list:
+                b_id = r["booking_id"]
+                s_type = r["service_type"]
+                cur_status = r.get("status", "pending")
+                status_badge = "badge-live" if cur_status in ("approved", "confirmed") else ("badge-rejected" if cur_status == "rejected" else "badge-pending")
 
-                dept_display = r.get("department") or "Computer Science & Engineering"
-                created_display = r.get("created_at") or "Standard Request"
+                col_card, col_action = st.columns([3.2, 1.8])
+                with col_card:
+                    rejection_html = ""
+                    if cur_status == "rejected" and r.get("rejection_reason"):
+                        rejection_html = f"""<div class="rejection-box"><b>Rejection Reason:</b> {r['rejection_reason']}</div>"""
 
-                st.markdown(
-                    clean_html(f"""
-                    <div class="content-card" style="margin-bottom: 0.75rem;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                            <span style="font-weight: 800; font-size: 1.05rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({s_type})</span></span>
-                            <span class="{status_badge}">{cur_status.upper()} &bull; #{b_id}</span>
+                    dept_display = r.get("department") or "Computer Science & Engineering"
+                    created_display = r.get("created_at") or "Standard Request"
+
+                    st.markdown(
+                        clean_html(f"""
+                        <div class="content-card" style="margin-bottom: 0.75rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                                <span style="font-weight: 800; font-size: 1.05rem;">{r['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({s_type})</span></span>
+                                <span class="{status_badge}">{cur_status.upper()} &bull; #{b_id}</span>
+                            </div>
+                            <div style="font-size: 0.84rem; color: #64748B; line-height: 1.55;">
+                                👤 <b>Student:</b> {r['student_name']} &bull; <b>ID:</b> <code>{r['student_id']}</code> &bull; <b>Dept:</b> {dept_display}<br>
+                                📅 <b>Date:</b> {r['booking_date']} &bull; ⏰ <b>Slot:</b> {r['start_time']} - {r['end_time']}<br>
+                                🎯 <b>Purpose:</b> <i>{r.get('purpose') or 'Not specified'}</i><br>
+                                ⏱️ <b>Submitted:</b> <span style="color: #64748B;">{created_display}</span>
+                            </div>
+                            {rejection_html}
                         </div>
-                        <div style="font-size: 0.84rem; color: #64748B; line-height: 1.55;">
-                            👤 <b>Student:</b> {r['student_name']} &bull; <b>ID:</b> <code>{r['student_id']}</code> &bull; <b>Dept:</b> {dept_display}<br>
-                            📅 <b>Date:</b> {r['booking_date']} &bull; ⏰ <b>Slot:</b> {r['start_time']} - {r['end_time']}<br>
-                            🎯 <b>Purpose:</b> <i>{r.get('purpose') or 'Not specified'}</i><br>
-                            ⏱️ <b>Submitted:</b> <span style="color: #64748B;">{created_display}</span>
-                        </div>
-                        {rejection_html}
-                    </div>
-                    """),
-                    unsafe_allow_html=True,
-                )
+                        """),
+                        unsafe_allow_html=True,
+                    )
 
-            with col_action:
-                if cur_status == "pending":
-                    # Approve Action
-                    if st.button("✅ Approve Request", key=f"adm_appr_{tab_key}_{b_id}", type="primary", use_container_width=True):
-                        ok, msg = approve_booking(b_id, s_type)
-                        if ok:
-                            st.success(f"Request #{b_id} Approved!")
-                            time.sleep(0.4)
-                            st.rerun()
-                        else:
-                            st.error(msg)
-
-                    # Reject Expander
-                    with st.expander("❌ Reject with Reason", expanded=False):
-                        rej_reason = st.text_input(
-                            "Rejection Reason",
-                            value="Departmental priority examination scheduled during this slot",
-                            key=f"rej_reason_in_{tab_key}_{b_id}",
-                        )
-                        if st.button("Confirm Rejection", key=f"adm_rej_{tab_key}_{b_id}", use_container_width=True):
-                            if reject_booking(b_id, s_type, rej_reason):
-                                st.warning(f"Request #{b_id} Rejected.")
-                                time.sleep(0.4)
+                with col_action:
+                    if cur_status == "pending":
+                        # Approve Action
+                        if st.button("✅ Approve Request", key=f"approve_req_list_{tab_key}_{b_id}", type="primary", use_container_width=True):
+                            ok, msg = approve_booking(b_id, s_type)
+                            if ok:
+                                st.success(f"Request #{b_id} Approved!")
+                                time.sleep(0.3)
                                 st.rerun()
-                elif cur_status in ("approved", "confirmed"):
-                    st.caption("Approved and active in schedule.")
-                    if st.button("Revoke / Cancel", key=f"adm_cancel_{tab_key}_{b_id}", use_container_width=True):
-                        cancel_reservation(b_id, s_type)
-                        st.info(f"Booking #{b_id} cancelled.")
-                        time.sleep(0.4)
-                        st.rerun()
-                else:
-                    st.caption(f"Status: {cur_status.capitalize()}")
+                            else:
+                                st.error(msg)
 
-    with req_tab_all:
-        render_admin_request_list(status_filter=None, tab_key="all")
-    with req_tab_pending:
-        render_admin_request_list(status_filter="pending", tab_key="pending")
-    with req_tab_appr:
-        render_admin_request_list(status_filter="approved", tab_key="approved")
-    with req_tab_rej:
-        render_admin_request_list(status_filter="rejected", tab_key="rejected")
+                        # Reject Expander
+                        with st.expander("❌ Reject with Reason", expanded=False):
+                            rej_reason = st.text_input(
+                                "Rejection Reason",
+                                value="Departmental priority examination scheduled during this slot",
+                                key=f"rejection_reason_req_list_{tab_key}_{b_id}",
+                            )
+                            if st.button("Confirm Rejection", key=f"reject_req_list_{tab_key}_{b_id}", use_container_width=True):
+                                if reject_booking(b_id, s_type, rej_reason):
+                                    st.warning(f"Request #{b_id} Rejected.")
+                                    time.sleep(0.3)
+                                    st.rerun()
+                    elif cur_status in ("approved", "confirmed"):
+                        st.caption("Approved and active in schedule.")
+                        if st.button("Revoke / Cancel", key=f"cancel_req_list_{tab_key}_{b_id}", use_container_width=True):
+                            cancel_reservation(b_id, s_type, is_admin=True)
+                            st.info(f"Booking #{b_id} cancelled.")
+                            time.sleep(0.3)
+                            st.rerun()
+                    else:
+                        st.caption(f"Status: {cur_status.capitalize()}")
+
+        with req_tab_all:
+            render_admin_request_list(status_filter=None, tab_key="all")
+        with req_tab_pending:
+            render_admin_request_list(status_filter="pending", tab_key="pending")
+        with req_tab_appr:
+            render_admin_request_list(status_filter="approved", tab_key="approved")
+        with req_tab_rej:
+            render_admin_request_list(status_filter="rejected", tab_key="rejected")
+
+    render_live_booking_requests_panel()
 
 
 # ------------------------------------------------------------------------------
@@ -1693,57 +2141,77 @@ elif is_admin and st.session_state.current_page == "🏖️ Leave Oversight":
     st.markdown("### 🏖️ Campus Student Leave Requests Oversight")
     st.caption("Review student leave applications across academic departments with policy decisions and administrator approval controls:")
 
-    all_leaves = get_all_leave_requests()
-    if all_leaves:
-        pending_leaves = [l for l in all_leaves if "pending" in l.get("status", "").lower()]
-        approved_leaves = [l for l in all_leaves if "approved" in l.get("status", "").lower()]
-        rejected_leaves = [l for l in all_leaves if "rejected" in l.get("status", "").lower()]
+    @st.fragment(run_every="5s")
+    def render_live_leave_oversight_panel():
+        st.caption(f"🟢 Live Auto-Sync Active (every 5s) • Last updated: `{datetime.now().strftime('%H:%M:%S')}`")
+        raw_leaves = get_all_leave_requests()
+        if raw_leaves:
+            seen_l_ids = set()
+            all_leaves = []
+            for l in raw_leaves:
+                if l["leave_id"] not in seen_l_ids:
+                    seen_l_ids.add(l["leave_id"])
+                    all_leaves.append(l)
 
-        st.markdown(
-            f"**Total Leaves:** `{len(all_leaves)}` &bull; **Action Required:** `{len(pending_leaves)}` &bull; **Approved:** `{len(approved_leaves)}` &bull; **Rejected:** `{len(rejected_leaves)}`"
-        )
+            pending_leaves = [l for l in all_leaves if "pending" in l.get("status", "").lower()]
+            approved_leaves = [l for l in all_leaves if "approved" in l.get("status", "").lower()]
+            rejected_leaves = [l for l in all_leaves if "rejected" in l.get("status", "").lower()]
 
-        for l in all_leaves:
-            l_id = l["leave_id"]
-            cur_lstatus = l.get("status", "Pending Review")
-            badge_class = "badge-live" if "approved" in cur_lstatus.lower() else ("badge-rejected" if "rejected" in cur_lstatus.lower() else "badge-pending")
+            st.markdown(
+                f"**Total Leaves:** `{len(all_leaves)}` &bull; **Action Required:** `{len(pending_leaves)}` &bull; **Approved:** `{len(approved_leaves)}` &bull; **Rejected:** `{len(rejected_leaves)}`"
+            )
 
-            col_lcard, col_lact = st.columns([3.4, 1.6])
-            with col_lcard:
-                st.markdown(
-                    clean_html(f"""
-                    <div class="content-card" style="margin-bottom: 0.75rem;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                            <span style="font-weight: 800; font-size: 1.05rem;">{l['leave_type']} &bull; {l['student_name']}</span>
-                            <span class="{badge_class}">{cur_lstatus}</span>
+            for l in all_leaves:
+                l_id = l["leave_id"]
+                cur_lstatus = l.get("status", "Pending Review")
+                badge_class = "badge-live" if "approved" in cur_lstatus.lower() else ("badge-rejected" if "rejected" in cur_lstatus.lower() else "badge-pending")
+
+                col_lcard, col_lact = st.columns([3.4, 1.6])
+                with col_lcard:
+                    st.markdown(
+                        clean_html(f"""
+                        <div class="content-card" style="margin-bottom: 0.75rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                                <span style="font-weight: 800; font-size: 1.05rem;">{l['leave_type']} &bull; {l['student_name']}</span>
+                                <span class="{badge_class}">{cur_lstatus}</span>
+                            </div>
+                            <div style="font-size: 0.84rem; color: #64748B; line-height: 1.5;">
+                                👤 <b>ID:</b> <code>{l['student_id']}</code> &bull; <b>Email:</b> {l['student_email']}<br>
+                                📅 <b>Dates:</b> {l['start_date']} to {l['end_date']}<br>
+                                📝 <b>Reason:</b> <i>{l['reason']}</i>
+                            </div>
                         </div>
-                        <div style="font-size: 0.84rem; color: #64748B; line-height: 1.5;">
-                            👤 <b>ID:</b> <code>{l['student_id']}</code> &bull; <b>Email:</b> {l['student_email']}<br>
-                            📅 <b>Dates:</b> {l['start_date']} to {l['end_date']}<br>
-                            📝 <b>Reason:</b> <i>{l['reason']}</i>
-                        </div>
-                    </div>
-                    """),
-                    unsafe_allow_html=True,
-                )
+                        """),
+                        unsafe_allow_html=True,
+                    )
 
-            with col_lact:
-                if "pending" in cur_lstatus.lower():
-                    if st.button("✅ Approve Leave", key=f"appr_leave_btn_{l_id}", type="primary", use_container_width=True):
-                        update_leave_status(l_id, "Approved (Admin)")
-                        st.success(f"Leave #{l_id} Approved!")
-                        time.sleep(0.4)
-                        st.rerun()
+                with col_lact:
+                    if "pending" in cur_lstatus.lower():
+                        if st.button("✅ Approve Leave", key=f"oversight_approve_leave_{l_id}", type="primary", use_container_width=True):
+                            ok = update_leave_status(l_id, "Approved", reviewed_by=student_name)
+                            if ok:
+                                st.success(f"Leave #{l_id} Approved!")
+                                time.sleep(0.3)
+                                st.rerun()
+                            else:
+                                st.error("Failed to approve leave request. It may have already been processed.")
 
-                    if st.button("❌ Reject Leave", key=f"rej_leave_btn_{l_id}", use_container_width=True):
-                        update_leave_status(l_id, "Rejected")
-                        st.warning(f"Leave #{l_id} Rejected.")
-                        time.sleep(0.4)
-                        st.rerun()
-                else:
-                    st.caption(f"Status: {cur_lstatus}")
-    else:
-        st.info("No student leave requests recorded yet.")
+                        with st.expander("❌ Reject Leave"):
+                            l_r_reason = st.text_input("Rejection Reason:", value="Declined per department attendance policy", key=f"oversight_rejection_reason_leave_{l_id}")
+                            if st.button("Confirm Leave Rejection", key=f"oversight_reject_leave_{l_id}", use_container_width=True):
+                                ok = update_leave_status(l_id, "Rejected", rejection_reason=l_r_reason, reviewed_by=student_name)
+                                if ok:
+                                    st.warning(f"Leave #{l_id} Rejected.")
+                                    time.sleep(0.3)
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to reject leave request. It may have already been processed.")
+                    else:
+                        st.caption(f"Status: {cur_lstatus}")
+        else:
+            st.info("No student leave requests recorded yet.")
+
+    render_live_leave_oversight_panel()
 
 
 # ==============================================================================
@@ -1762,7 +2230,7 @@ elif not is_admin and st.session_state.current_page == "📊 Student Dashboard":
         <div class="hero-banner">
             <h2 class="hero-title">Welcome back, {student_name}! 👋</h2>
             <p class="hero-subtitle">
-                Logged in as <b>Student</b> &bull; Roll No: <code>{user_id}</code> &bull; Department: <b>{department}</b>.<br>
+                Logged in as <b>Student</b> &bull; Roll No: <code>{roll_number}</code> &bull; Email: <code>{student_email}</code> &bull; Department: <b>{department}</b>.<br>
                 State your request in natural language — CampusPilot AI verifies real-time SQLite availability,
                 detects scheduling conflicts, and submits your booking requests.
             </p>
@@ -1771,209 +2239,229 @@ elif not is_admin and st.session_state.current_page == "📊 Student Dashboard":
         unsafe_allow_html=True,
     )
 
-    # 2. Suggested Prompt Chips (Direct AI Triggers)
-    st.caption("⚡ **Click any prompt to run an autonomous request:**")
+    # 2. Dynamic Autonomous Operations & Shortcuts
+    st.caption("⚡ **Autonomous Facility Operations:**")
     h_c1, h_c2, h_c3, h_c4 = st.columns(4)
     with h_c1:
-        if st.button("🔬 Lab for 30 students tomorrow 10-12", use_container_width=True, key="h_p1"):
-            process_user_input("I need a computer lab for 30 students tomorrow from 10 AM to 12 PM for a Python practical")
-            st.session_state.current_page = "💬 AI Assistant"
+        if st.button("🚀 Start a Booking", use_container_width=True, key="h_p1"):
+            st.session_state.current_page = "🔬 Lab Booking"
             st.rerun()
     with h_c2:
-        if st.button("📚 Room for 4 students tomorrow 2-4 PM", use_container_width=True, key="h_p2"):
-            process_user_input("Find me a discussion room for 4 people tomorrow from 2 PM to 4 PM for group study")
+        if st.button("💬 Ask CampusPilot AI", use_container_width=True, key="h_p2"):
             st.session_state.current_page = "💬 AI Assistant"
             st.rerun()
     with h_c3:
-        if st.button("🔍 Check AI Lab tomorrow 10-12", use_container_width=True, key="h_p3"):
-            process_user_input("Check if AI Lab is available tomorrow from 10:00 to 12:00")
-            st.session_state.current_page = "💬 AI Assistant"
+        if st.button("🏢 Check Available Facilities", use_container_width=True, key="h_p3"):
+            st.session_state.current_page = "🏢 Facilities"
             st.rerun()
     with h_c4:
-        if st.button("📋 Show my upcoming bookings", use_container_width=True, key="h_p4"):
-            process_user_input(f"Show all my upcoming reservations for {user_id}")
-            st.session_state.current_page = "💬 AI Assistant"
+        if st.button("📋 View Booking Status", use_container_width=True, key="h_p4"):
+            st.session_state.current_page = "📋 My Bookings"
             st.rerun()
 
-    st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
-
-    # 3. Four Student Metric Cards
-    my_all_res = get_all_student_reservations(student_id=user_id)
-    my_active = len([b for b in my_all_res if b.get("status") in ("confirmed", "approved")])
-    my_pending = len([b for b in my_all_res if b.get("status") == "pending"])
-    my_leaves = len(get_student_leave_requests(student_id=user_id))
-
-    c_s1, c_s2, c_s3, c_s4 = st.columns(4)
-    with c_s1:
-        st.markdown(
-            clean_html(f"""
-            <div class="stat-card">
-                <div class="stat-header">
-                    <span class="stat-label">Active Bookings</span>
-                    <span class="stat-icon">📅</span>
-                </div>
-                <div class="stat-value">{my_active}</div>
-                <div class="stat-footer" style="color: #059669;">
-                    <span>● Confirmed in SQLite</span>
-                </div>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-    with c_s2:
-        st.markdown(
-            clean_html(f"""
-            <div class="stat-card">
-                <div class="stat-header">
-                    <span class="stat-label">Pending Approval</span>
-                    <span class="stat-icon">⏳</span>
-                </div>
-                <div class="stat-value" style="color: {'#DC2626' if my_pending > 0 else '#0F172A'};">{my_pending}</div>
-                <div class="stat-footer" style="color: #D97706;">
-                    <span>● Under Review</span>
-                </div>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-    with c_s3:
-        st.markdown(
-            clean_html(f"""
-            <div class="stat-card">
-                <div class="stat-header">
-                    <span class="stat-label">Approved Leaves</span>
-                    <span class="stat-icon">🏖️</span>
-                </div>
-                <div class="stat-value">{my_leaves}</div>
-                <div class="stat-footer" style="color: #059669;">
-                    <span>● Auto-Accepted</span>
-                </div>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-    with c_s4:
-        st.markdown(
-            clean_html(f"""
-            <div class="stat-card">
-                <div class="stat-header">
-                    <span class="stat-label">AI Campus Assistant</span>
-                    <span class="stat-icon">🤖</span>
-                </div>
-                <div class="stat-value">Online</div>
-                <div class="stat-footer" style="color: #059669;">
-                    <span>● Gemini-Powered</span>
-                </div>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
+    dash_nl = st.chat_input("Ask CampusPilot AI (e.g., 'I need the AI Lab tomorrow from 10 AM to 12 PM')...", key="dash_nl_input")
+    if dash_nl:
+        process_user_input(dash_nl)
+        st.session_state.current_page = "💬 AI Assistant"
+        st.rerun()
 
     st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
 
-    # 4. Balanced Two-Column Section
-    col_dash_left, col_dash_right = st.columns([1.4, 1], gap="large")
+    # 3. Live Student Metrics & Recent Reservations (Auto-sync every 5s)
+    @st.fragment(run_every="5s")
+    def render_live_student_overview():
+        my_all_res = get_all_student_reservations(student_id=user_id)
+        my_active = len([b for b in my_all_res if b.get("status") in ("confirmed", "approved")])
+        my_pending = len([b for b in my_all_res if b.get("status") == "pending"])
+        all_my_leaves = get_student_leave_requests(student_id=user_id)
+        my_approved_leaves = len([l for l in all_my_leaves if "approved" in (l.get("status") or "").lower()])
+        my_pending_leaves = len([l for l in all_my_leaves if "pending" in (l.get("status") or "").lower()])
 
-    with col_dash_left:
-        st.markdown(
-            clean_html(f"""
-            <div class="card-header-title">
-                <span>📋 My Recent Reservations</span>
-                <span class="badge-profile-chip">{user_id}</span>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
+        st.caption(f"🟢 Live Status Sync (every 5s) • Last updated: `{datetime.now().strftime('%H:%M:%S')}`")
 
-        if my_all_res:
-            for b in my_all_res[:4]:
-                b_stat = b.get("status", "pending")
-                badge = "badge-live" if b_stat in ("confirmed", "approved") else ("badge-rejected" if b_stat == "rejected" else "badge-pending")
-                st.markdown(
-                    clean_html(f"""
-                    <div class="booking-row">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem;">
-                            <span style="font-weight: 700; font-size: 0.95rem;">{b['facility_name']}</span>
-                            <span class="{badge}">{b_stat.upper()} &bull; #{b['booking_id']}</span>
-                        </div>
-                        <div style="font-size: 0.82rem; color: #64748B;">
-                            📅 {b['booking_date']} &bull; ⏰ {b['start_time']} - {b['end_time']}<br>
-                            🎯 <b>Purpose:</b> {b.get('purpose') or 'Academic Practical'}
-                        </div>
+        c_s1, c_s2, c_s3, c_s4 = st.columns(4)
+        with c_s1:
+            st.markdown(
+                clean_html(f"""
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Active Bookings</span>
+                        <span class="stat-icon">📅</span>
                     </div>
-                    """),
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.info("You have no reservations yet. Click below to book a lab or study room!")
-
-    with col_dash_right:
-        st.markdown(
-            clean_html(f"""
-            <div class="card-header-title">
-                <span>⚡ Quick Actions</span>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-        qa1, qa2 = st.columns(2)
-        with qa1:
-            if st.button("🔬 Book Lab", use_container_width=True, key="sd_qa_lab"):
-                st.session_state.current_page = "🔬 Lab Booking"
-                st.rerun()
-            if st.button("🏖️ Leave Request", use_container_width=True, key="sd_qa_leave"):
-                st.session_state.current_page = "🏖️ Leave Requests"
-                st.rerun()
-        with qa2:
-            if st.button("📚 Book Room", use_container_width=True, key="sd_qa_room"):
-                st.session_state.current_page = "📚 Discussion Rooms"
-                st.rerun()
-            if st.button("📋 My Bookings", use_container_width=True, key="sd_qa_myb"):
-                st.session_state.current_page = "📋 My Bookings"
-                st.rerun()
-
-        st.markdown("<div style='height: 0.6rem;'></div>", unsafe_allow_html=True)
-        st.markdown(
-            clean_html(f"""
-            <div class="content-card">
-                <div style="font-weight: 700; font-size: 0.88rem; margin-bottom: 0.4rem; color: #E50914;">💡 Booking Workflow Guide:</div>
-                <div style="font-size: 0.8rem; color: #64748B; line-height: 1.5;">
-                    <b>1. Submit Request:</b> Select lab and state your purpose.<br>
-                    <b>2. Pending Status:</b> Awaits faculty admin review.<br>
-                    <b>3. Admin Approval:</b> Confirms slot or records reason.<br>
-                    <b>4. Instant Ledger:</b> Track live status in My Bookings.
+                    <div class="stat-value">{my_active}</div>
+                    <div class="stat-footer" style="color: #059669;">
+                        <span>● Confirmed in SQLite</span>
+                    </div>
                 </div>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
+                """),
+                unsafe_allow_html=True,
+            )
+        with c_s2:
+            st.markdown(
+                clean_html(f"""
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Pending Approval</span>
+                        <span class="stat-icon">⏳</span>
+                    </div>
+                    <div class="stat-value" style="color: {'#DC2626' if my_pending > 0 else '#0F172A'};">{my_pending}</div>
+                    <div class="stat-footer" style="color: #D97706;">
+                        <span>● Under Review</span>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+        with c_s3:
+            st.markdown(
+                clean_html(f"""
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Approved Leaves</span>
+                        <span class="stat-icon">🏖️</span>
+                    </div>
+                    <div class="stat-value">{my_approved_leaves}</div>
+                    <div class="stat-footer" style="color: {'#D97706' if my_pending_leaves > 0 else '#059669'};">
+                        <span>● {my_pending_leaves} Pending Review</span>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+        with c_s4:
+            st.markdown(
+                clean_html(f"""
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">AI Campus Assistant</span>
+                        <span class="stat-icon">🤖</span>
+                    </div>
+                    <div class="stat-value">Online</div>
+                    <div class="stat-footer" style="color: #059669;">
+                        <span>● Gemini-Powered</span>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
+
+        # 4. Balanced Two-Column Section
+        col_dash_left, col_dash_right = st.columns([1.4, 1], gap="large")
+
+        with col_dash_left:
+            st.markdown(
+                clean_html(f"""
+                <div class="card-header-title">
+                    <span>📋 My Recent Reservations</span>
+                    <span class="badge-profile-chip">{user_id}</span>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+
+            if my_all_res:
+                for b in my_all_res[:4]:
+                    b_stat = b.get("status", "pending")
+                    badge = "badge-live" if b_stat in ("confirmed", "approved") else ("badge-rejected" if b_stat == "rejected" else "badge-pending")
+                    st.markdown(
+                        clean_html(f"""
+                        <div class="booking-row">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem;">
+                                <span style="font-weight: 700; font-size: 0.95rem;">{b['facility_name']}</span>
+                                <span class="{badge}">{b_stat.upper()} &bull; #{b['booking_id']}</span>
+                            </div>
+                            <div style="font-size: 0.82rem; color: #64748B;">
+                                📅 {b['booking_date']} &bull; ⏰ {b['start_time']} - {b['end_time']}<br>
+                                🎯 <b>Purpose:</b> {b.get('purpose') or 'Academic Practical'}
+                            </div>
+                        </div>
+                        """),
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("You have no reservations yet. Click below to book a lab or study room!")
+
+        with col_dash_right:
+            st.markdown(
+                clean_html(f"""
+                <div class="card-header-title">
+                    <span>⚡ Quick Actions</span>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+            qa1, qa2 = st.columns(2)
+            with qa1:
+                if st.button("🔬 Book Lab", use_container_width=True, key="sd_qa_lab"):
+                    st.session_state.current_page = "🔬 Lab Booking"
+                    st.rerun(scope="app")
+                if st.button("🏖️ Leave Request", use_container_width=True, key="sd_qa_leave"):
+                    st.session_state.current_page = "🏖️ Leave Requests"
+                    st.rerun(scope="app")
+            with qa2:
+                if st.button("📚 Book Room", use_container_width=True, key="sd_qa_room"):
+                    st.session_state.current_page = "📚 Discussion Rooms"
+                    st.rerun(scope="app")
+                if st.button("📋 My Bookings", use_container_width=True, key="sd_qa_myb"):
+                    st.session_state.current_page = "📋 My Bookings"
+                    st.rerun(scope="app")
+
+            st.markdown("<div style='height: 0.6rem;'></div>", unsafe_allow_html=True)
+            st.markdown(
+                clean_html(f"""
+                <div class="content-card">
+                    <div style="font-weight: 700; font-size: 0.88rem; margin-bottom: 0.4rem; color: #E50914;">💡 Booking Workflow Guide:</div>
+                    <div style="font-size: 0.8rem; color: #64748B; line-height: 1.5;">
+                        <b>1. Submit Request:</b> Select lab and state your purpose.<br>
+                        <b>2. Pending Status:</b> Awaits faculty admin review.<br>
+                        <b>3. Admin Approval:</b> Confirms slot or records reason.<br>
+                        <b>4. Instant Ledger:</b> Track live status in My Bookings.
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
+            )
+
+    render_live_student_overview()
 
 
 # ------------------------------------------------------------------------------
 # SHARED VIEW: 💬 AI ASSISTANT
 # ------------------------------------------------------------------------------
 elif st.session_state.current_page == "💬 AI Assistant":
-    st.markdown(f"### 💬 Gemini-Powered AI Campus Assistant ({student_name})")
-    st.caption("Describe your scheduling needs naturally. The assistant extracts constraints, queries SQLite, ranks candidate venues, and presents interactive options.")
+    st.markdown(f"### 💬 AI Campus Assistant ({student_name})")
+    st.caption("Hello! I'm your CampusPilot AI assistant. What would you like to do today?")
 
-    # Suggested prompt pills
-    st.markdown("**Suggested Prompts:**")
-    ap_c1, ap_c2, ap_c3, ap_c4 = st.columns(4)
+    # Operation Shortcuts
+    st.markdown("**Quick Operation Shortcuts:**")
+    ap_c1, ap_c2, ap_c3 = st.columns(3)
     with ap_c1:
-        if st.button("💻 Lab for 30 students tomorrow 10-12", use_container_width=True, key="ap_p1"):
-            process_user_input("I need a computer lab for 30 students tomorrow from 10 AM to 12 PM for a Python practical")
+        if st.button("🔬 Book a Laboratory", use_container_width=True, key="ap_p1"):
+            process_user_input("Book a Laboratory")
             st.rerun()
     with ap_c2:
-        if st.button("📚 Room for 4 students tomorrow 2-4 PM", use_container_width=True, key="ap_p2"):
-            process_user_input("Find me a discussion room for 4 people tomorrow from 2 PM to 4 PM for group study")
+        if st.button("📚 Book a Discussion Room", use_container_width=True, key="ap_p2"):
+            process_user_input("Book a Discussion Room")
             st.rerun()
     with ap_c3:
-        if st.button("🔍 Check AI Lab Tomorrow 10-12", use_container_width=True, key="ap_p3"):
-            process_user_input("Check if AI Lab is available tomorrow from 10:00 to 12:00")
+        if st.button("🔍 Check Availability", use_container_width=True, key="ap_p3"):
+            process_user_input("Check Availability")
             st.rerun()
+
+    ap_c4, ap_c5, ap_c6 = st.columns(3)
     with ap_c4:
-        if st.button("📋 Show My Bookings", use_container_width=True, key="ap_p4"):
-            process_user_input(f"Show all my upcoming reservations for {user_id}")
+        if st.button("📋 View My Bookings", use_container_width=True, key="ap_p4"):
+            process_user_input("View My Bookings")
+            st.rerun()
+    with ap_c5:
+        if st.button("🏖️ Submit a Leave Request", use_container_width=True, key="ap_p5"):
+            process_user_input("Submit a Leave Request")
+            st.rerun()
+    with ap_c6:
+        if st.button("🏢 Campus Facility Information", use_container_width=True, key="ap_p6"):
+            process_user_input("Campus Facility Information")
             st.rerun()
 
     st.markdown("---")
@@ -1983,7 +2471,7 @@ elif st.session_state.current_page == "💬 AI Assistant":
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-            # Tool Execution Traces Expander
+            # Tool Execution Traces Expander (if any)
             if msg.get("steps"):
                 with st.expander(f"🛠️ Execution Trace ({len(msg['steps'])} tool steps)", expanded=False):
                     for idx, step in enumerate(msg["steps"], 1):
@@ -1998,59 +2486,22 @@ elif st.session_state.current_page == "💬 AI Assistant":
                             st.caption("Database Observation:")
                             st.code(obs[:500] + ("..." if len(obs) > 500 else ""), language="text")
 
-            # Interactive Recommendation Cards
-            if msg.get("recommendations"):
-                st.markdown("##### 🎯 Recommended Facilities")
-                for r_idx, rec in enumerate(msg["recommendations"]):
-                    badge_class = "rec-badge-best" if rec.get("match_badge") == "Best Match" else "rec-badge-alt"
-                    st.markdown(
-                        clean_html(f"""
-                        <div class="rec-card">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                                <span style="font-weight: 800; font-size: 1.05rem; color: #0F172A;">{rec['facility_name']}</span>
-                                <span class="{badge_class}">{rec.get('match_badge', 'Option')}</span>
-                            </div>
-                            <div style="font-size: 0.84rem; color: #64748B; margin-bottom: 0.4rem;">
-                                📍 {rec.get('location')} &bull; 👥 Capacity: <b>{rec.get('capacity')}</b> &bull; ⏰ <b>{rec.get('start_time')} - {rec.get('end_time')}</b> ({rec.get('booking_date')})
-                            </div>
-                            <div style="font-size: 0.84rem; color: #E50914; margin-bottom: 0.75rem;">
-                                💡 <i>{rec.get('match_reason')}</i>
-                            </div>
-                        </div>
-                        """),
-                        unsafe_allow_html=True,
-                    )
-                    if rec.get("is_available") and rec.get("is_capacity_sufficient"):
-                        if st.button(f"👉 Select {rec['facility_name']} ({rec['start_time']} - {rec['end_time']})", key=f"rec_btn_{m_idx}_{r_idx}"):
-                            st.session_state.pending_booking = {
-                                "service_type": rec["facility_type"],
-                                "item_id": rec["facility_id"],
-                                "item_name": rec["facility_name"],
-                                "lab_id": rec.get("lab_id"),
-                                "room_id": rec.get("room_id"),
-                                "booking_date": rec["booking_date"],
-                                "start_time": rec["start_time"],
-                                "end_time": rec["end_time"],
-                                "student_id": user_id,
-                                "student_name": student_name,
-                            }
-                            st.rerun()
-
     # Human-in-the-Loop Confirmation Gate
     if st.session_state.pending_booking:
         pending = st.session_state.pending_booking
+        approval_note = pending.get("approval_requirement") or ("Requires Administrator Approval (Submits as Pending Approval)" if pending.get("service_type") == "lab" else "Instant Self-Service Confirmation")
         st.markdown(
             clean_html(f"""
             <div class="booking-confirm-card">
                 <div class="booking-confirm-header">
-                    <span>🛡️ Explicit Confirmation Required</span>
+                    <span>🛡️ Booking Confirmation Required</span>
                 </div>
                 <p style="font-size: 0.9rem; color: #64748B; margin: 0 0 1rem 0;">
-                    The slot is confirmed available in SQLite. Please review the reservation parameters before confirming:
+                    Please review the reservation parameters before confirming your request:
                 </p>
                 <div class="booking-details-grid">
                     <div class="booking-item">
-                        <div class="booking-item-label">Facility / Room</div>
+                        <div class="booking-item-label">Facility / Venue</div>
                         <div class="booking-item-value">{pending['item_name']}</div>
                     </div>
                     <div class="booking-item">
@@ -2058,12 +2509,24 @@ elif st.session_state.current_page == "💬 AI Assistant":
                         <div class="booking-item-value">{pending['booking_date']}</div>
                     </div>
                     <div class="booking-item">
-                        <div class="booking-item-label">Time Interval</div>
+                        <div class="booking-item-label">Time Slot</div>
                         <div class="booking-item-value">{pending['start_time']} to {pending['end_time']}</div>
                     </div>
                     <div class="booking-item">
-                        <div class="booking-item-label">Account Details</div>
-                        <div class="booking-item-value">{student_name} ({user_id})</div>
+                        <div class="booking-item-label">Number of Occupants</div>
+                        <div class="booking-item-value">{pending.get('occupants', 30)} seats</div>
+                    </div>
+                    <div class="booking-item">
+                        <div class="booking-item-label">Purpose</div>
+                        <div class="booking-item-value">{pending.get('purpose', 'Academic Research')}</div>
+                    </div>
+                    <div class="booking-item">
+                        <div class="booking-item-label">Current Availability</div>
+                        <div class="booking-item-value" style="color: #059669; font-weight: 700;">● Confirmed Available in Database</div>
+                    </div>
+                    <div class="booking-item" style="grid-column: span 2;">
+                        <div class="booking-item-label">Approval Requirement</div>
+                        <div class="booking-item-value" style="color: #D97706; font-weight: 700;">{approval_note}</div>
                     </div>
                 </div>
             </div>
@@ -2073,19 +2536,19 @@ elif st.session_state.current_page == "💬 AI Assistant":
 
         col_c1, col_c2 = st.columns([1, 1])
         with col_c1:
-            if st.button("✅ Confirm Reservation", type="primary", use_container_width=True, key="btn_confirm_chat"):
+            if st.button("✅ Confirm Booking", type="primary", use_container_width=True, key="btn_confirm_chat"):
                 confirm_pending_booking()
                 st.rerun()
         with col_c2:
             if st.button("❌ Cancel Request", use_container_width=True, key="btn_cancel_chat"):
                 st.session_state.pending_booking = None
+                st.session_state.ai_conversation_state = {}
                 cancel_msg = "The pending reservation request was cancelled."
                 st.session_state.messages.append({"role": "assistant", "content": cancel_msg, "steps": [], "recommendations": []})
-                st.session_state.langchain_history.append(AIMessage(content=cancel_msg))
                 st.rerun()
 
     # Chat Input
-    if user_prompt := st.chat_input("Ask a question or describe what you need (e.g. 'Lab for 30 students tomorrow 10 AM to 12 PM')..."):
+    if user_prompt := st.chat_input("Describe what you need, for example: I need the AI Lab for my project tomorrow from 10 AM to 12 PM.", key="assistant_chat_input"):
         process_user_input(user_prompt)
         st.rerun()
 
@@ -2302,80 +2765,88 @@ elif not is_admin and st.session_state.current_page == "📚 Discussion Rooms":
 # STUDENT VIEW 4: 📋 MY BOOKINGS (PENDING, APPROVED, REJECTED + REASONS)
 # ------------------------------------------------------------------------------
 elif not is_admin and st.session_state.current_page == "📋 My Bookings":
-    st.markdown(f"### 📋 Reservations for {student_name} ({user_id})")
-    st.caption("Review, track, and manage all your campus laboratory and discussion room reservations:")
+    st.markdown(f"### 📋 Reservations for {student_name} ({roll_number})")
+    st.caption(f"Account ID: `{user_id}` • Email: `{student_email}` — Showing only reservations owned by your authenticated account:")
 
-    # Strictly isolated query for authenticated user's ID
-    my_all_res = get_all_student_reservations(student_id=user_id)
+    @st.fragment(run_every="5s")
+    def render_live_student_bookings():
+        st.caption(f"🟢 Live Status Sync (every 5s) • Last updated: `{datetime.now().strftime('%H:%M:%S')}`")
 
-    tab_all, tab_pending, tab_approved, tab_rejected, tab_cancelled = st.tabs([
-        "All My Bookings",
-        "⏳ Pending Approval",
-        "✅ Approved",
-        "❌ Rejected",
-        "🚫 Cancelled",
-    ])
+        # Strictly isolated query for authenticated user's ID
+        my_all_res = get_all_student_reservations(student_id=user_id)
 
-    def render_student_booking_list(filter_status=None, tab_id="all"):
-        bookings = my_all_res
-        if filter_status:
-            if filter_status == "approved":
-                bookings = [b for b in bookings if b.get("status") in ("approved", "confirmed")]
-            else:
-                bookings = [b for b in bookings if b.get("status") == filter_status]
+        tab_all, tab_pending, tab_approved, tab_rejected, tab_cancelled = st.tabs([
+            "All My Bookings",
+            "⏳ Pending Approval",
+            "✅ Approved",
+            "❌ Rejected",
+            "🚫 Cancelled",
+        ])
 
-        if not bookings:
-            st.info(f"No bookings found in category: {filter_status or 'All'}.")
-            return
+        def render_student_booking_list(filter_status=None, tab_id="all"):
+            bookings = my_all_res
+            if filter_status:
+                if filter_status == "approved":
+                    bookings = [b for b in bookings if b.get("status") in ("approved", "confirmed")]
+                else:
+                    bookings = [b for b in bookings if b.get("status") == filter_status]
 
-        for b in bookings:
-            cur_stat = b.get("status", "pending")
-            status_badge = "badge-live" if cur_stat in ("approved", "confirmed") else ("badge-rejected" if cur_stat == "rejected" else "badge-pending")
-            b_id = b["booking_id"]
-            s_type = b["service_type"]
+            if not bookings:
+                st.info(f"No bookings found in category: {filter_status or 'All'}.")
+                return
 
-            c_info, c_action = st.columns([4, 1.2])
-            with c_info:
-                rejection_html = ""
-                if cur_stat == "rejected" and b.get("rejection_reason"):
-                    rejection_html = f"""<div class="rejection-box"><b>Administrator Feedback:</b> {b['rejection_reason']}</div>"""
+            for b in bookings:
+                cur_stat = b.get("status", "pending")
+                status_badge = "badge-live" if cur_stat in ("approved", "confirmed") else ("badge-rejected" if cur_stat == "rejected" else "badge-pending")
+                b_id = b["booking_id"]
+                s_type = b["service_type"]
 
-                st.markdown(
-                    clean_html(f"""
-                    <div class="content-card" style="margin-bottom: 0.7rem;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                            <span style="font-weight: 800; font-size: 1.05rem; color: #0F172A;">{b['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({s_type})</span></span>
-                            <span class="{status_badge}">REF #{b_id} &bull; {cur_stat.upper()}</span>
+                c_info, c_action = st.columns([4, 1.2])
+                with c_info:
+                    rejection_html = ""
+                    if cur_stat == "rejected" and b.get("rejection_reason"):
+                        rejection_html = f"""<div class="rejection-box"><b>Administrator Feedback:</b> {b['rejection_reason']}</div>"""
+
+                    st.markdown(
+                        clean_html(f"""
+                        <div class="content-card" style="margin-bottom: 0.7rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                                <span style="font-weight: 800; font-size: 1.05rem; color: #0F172A;">{b['facility_name']} <span style="font-size: 0.8rem; color: #64748B;">({s_type})</span></span>
+                                <span class="{status_badge}">REF #{b_id} &bull; {cur_stat.upper()}</span>
+                            </div>
+                            <div style="font-size: 0.84rem; color: #64748B; line-height: 1.5;">
+                                📅 <b>{b['booking_date']}</b> &bull; ⏰ <b>{b['start_time']} - {b['end_time']}</b> &bull; 📍 {b['location']}<br>
+                                🎯 <b>Purpose:</b> <i>{b.get('purpose') or 'Academic Practical'}</i>
+                            </div>
+                            {rejection_html}
                         </div>
-                        <div style="font-size: 0.84rem; color: #64748B; line-height: 1.5;">
-                            📅 <b>{b['booking_date']}</b> &bull; ⏰ <b>{b['start_time']} - {b['end_time']}</b> &bull; 📍 {b['location']}<br>
-                            🎯 <b>Purpose:</b> <i>{b.get('purpose') or 'Academic Practical'}</i>
-                        </div>
-                        {rejection_html}
-                    </div>
-                    """),
-                    unsafe_allow_html=True,
-                )
-            with c_action:
-                if cur_stat in ("confirmed", "approved", "pending"):
-                    btn_key = f"cancel_{tab_id}_{s_type.replace(' ', '_')}_{b_id}"
-                    if st.button("Cancel Booking", key=btn_key, use_container_width=True):
-                        success = cancel_reservation(b_id, s_type)
-                        if success:
-                            st.success(f"Booking #{b_id} cancelled.")
-                            time.sleep(0.4)
-                            st.rerun()
+                        """),
+                        unsafe_allow_html=True,
+                    )
+                with c_action:
+                    if cur_stat in ("confirmed", "approved", "pending"):
+                        btn_key = f"cancel_{tab_id}_{s_type.replace(' ', '_')}_{b_id}"
+                        if st.button("Cancel Booking", key=btn_key, use_container_width=True):
+                            success = cancel_reservation(b_id, s_type, owner_id=user_id)
+                            if success:
+                                st.success(f"Booking #{b_id} cancelled.")
+                                time.sleep(0.3)
+                                st.rerun()
+                            else:
+                                st.error("Unable to cancel booking: ownership verification failed.")
 
-    with tab_all:
-        render_student_booking_list(filter_status=None, tab_id="all")
-    with tab_pending:
-        render_student_booking_list(filter_status="pending", tab_id="pending")
-    with tab_approved:
-        render_student_booking_list(filter_status="approved", tab_id="approved")
-    with tab_rejected:
-        render_student_booking_list(filter_status="rejected", tab_id="rejected")
-    with tab_cancelled:
-        render_student_booking_list(filter_status="cancelled", tab_id="cancelled")
+        with tab_all:
+            render_student_booking_list(filter_status=None, tab_id="all")
+        with tab_pending:
+            render_student_booking_list(filter_status="pending", tab_id="pending")
+        with tab_approved:
+            render_student_booking_list(filter_status="approved", tab_id="approved")
+        with tab_rejected:
+            render_student_booking_list(filter_status="rejected", tab_id="rejected")
+        with tab_cancelled:
+            render_student_booking_list(filter_status="cancelled", tab_id="cancelled")
+
+    render_live_student_bookings()
 
 
 # ------------------------------------------------------------------------------
@@ -2418,7 +2889,7 @@ elif not is_admin and st.session_state.current_page == "🏖️ Leave Requests":
             elif l_start > l_end:
                 st.error("Start date cannot be after end date.")
             else:
-                with st.spinner("Applying university leave policy..."):
+                with st.spinner("Submitting leave request for administrator review..."):
                     try:
                         l_rec = create_leave_request(
                             student_id=user_id,
@@ -2429,16 +2900,11 @@ elif not is_admin and st.session_state.current_page == "🏖️ Leave Requests":
                             end_date=l_end.strftime("%Y-%m-%d"),
                             reason=leave_reason.strip(),
                         )
-                        if "approved" in l_rec['status'].lower():
-                            st.success(
-                                f"🎉 Leave Request Auto-Accepted! Reference #{l_rec['leave_id']}. "
-                                f"Policy Decision: **{l_rec['status']}**."
-                            )
-                        else:
-                            st.info(
-                                f"📋 Leave Request Submitted for Administrator Review. Reference #{l_rec['leave_id']}. "
-                                f"Status: **{l_rec['status']}**."
-                            )
+                        st.success(
+                            f"🎉 Leave Request Submitted! Reference #{l_rec['leave_id']}. "
+                            f"Status: **Pending Approval** (Awaiting Administrator Review). "
+                            f"Your application has been forwarded to the faculty administration queue."
+                        )
                         time.sleep(1)
                         st.rerun()
                     except Exception as ex:
@@ -2446,28 +2912,49 @@ elif not is_admin and st.session_state.current_page == "🏖️ Leave Requests":
 
     with col_lhistory:
         st.markdown("#### 📋 My Leave Records")
-        my_leaves = get_student_leave_requests(student_id=user_id)
-        if my_leaves:
-            for l in my_leaves:
-                st_val = l.get("status", "Pending Review")
-                badge_cls = "badge-live" if "approved" in st_val.lower() else ("badge-rejected" if "rejected" in st_val.lower() else "badge-pending")
-                st.markdown(
-                    clean_html(f"""
-                    <div class="content-card" style="margin-bottom: 0.6rem;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
-                            <span style="font-weight: 700; font-size: 0.95rem;">{l['leave_type']}</span>
-                            <span class="{badge_cls}">{st_val}</span>
+
+        @st.fragment(run_every="5s")
+        def render_live_student_leave_history():
+            st.caption(f"🟢 Live Status Sync (every 5s) • Last updated: `{datetime.now().strftime('%H:%M:%S')}`")
+            my_leaves = get_student_leave_requests(student_id=user_id)
+            if my_leaves:
+                for l in my_leaves:
+                    st_val = l.get("status", "Pending Approval")
+                    badge_cls = "badge-live" if "approved" in st_val.lower() else ("badge-rejected" if "rejected" in st_val.lower() else "badge-pending")
+
+                    rej_html = ""
+                    if "rejected" in st_val.lower() and l.get("rejection_reason"):
+                        rej_html = f"""
+                        <div style="margin-top: 0.45rem; padding: 0.45rem 0.65rem; background: #FEF2F2; border-left: 3px solid #EF4444; border-radius: 4px; font-size: 0.8rem; color: #991B1B;">
+                            <b>Administrator Reason:</b> {l['rejection_reason']}
                         </div>
-                        <div style="font-size: 0.82rem; color: #64748B;">
-                            📅 {l['start_date']} to {l['end_date']}<br>
-                            📝 <i>{l['reason']}</i>
+                        """
+
+                    reviewer_note = ""
+                    if "approved" in st_val.lower() and l.get("reviewed_by"):
+                        reviewer_note = f"<br>🛡️ <span style='color: #059669;'>Approved by: <b>{l['reviewed_by']}</b></span>"
+
+                    st.markdown(
+                        clean_html(f"""
+                        <div class="content-card" style="margin-bottom: 0.6rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                                <span style="font-weight: 700; font-size: 0.95rem;">{l['leave_type']}</span>
+                                <span class="{badge_cls}">{st_val} &bull; #{l['leave_id']}</span>
+                            </div>
+                            <div style="font-size: 0.82rem; color: #64748B;">
+                                📅 <b>Dates:</b> {l['start_date']} to {l['end_date']}<br>
+                                📝 <b>Reason:</b> <i>{l['reason']}</i>
+                                {reviewer_note}
+                            </div>
+                            {rej_html}
                         </div>
-                    </div>
-                    """),
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.info("No past leave requests found.")
+                        """),
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("No past leave requests found.")
+
+        render_live_student_leave_history()
 
 
 # ------------------------------------------------------------------------------
