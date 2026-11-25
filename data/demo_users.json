@@ -855,7 +855,7 @@
     "university": "Lovely Professional University",
     "department": "Computer Science & Engineering",
     "avatar": "\ud83d\udc68\u200d\ud83c\udf93",
-    "created_at": "2026-11-25T01:49:50.650451"
+    "created_at": "2026-11-25T13:41:31.035821"
   },
   "student_b_iso@campus.edu": {
     "user_id": "student_same_name_student_ROLL_999_e7311d",
@@ -868,6 +868,6 @@
     "university": "Lovely Professional University",
     "department": "Artificial Intelligence",
     "avatar": "\ud83d\udc68\u200d\ud83c\udf93",
-    "created_at": "2026-11-25T01:49:50.756060"
+    "created_at": "2026-11-25T13:41:31.266641"
   }
 }
