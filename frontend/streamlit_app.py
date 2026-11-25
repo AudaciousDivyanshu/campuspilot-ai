@@ -40,6 +40,11 @@ if "app" in sys.modules and not hasattr(sys.modules["app"], "__path__"):
 
 load_dotenv()
 
+from app.database.init_db import init_db
+
+# Initialize the frontend database before accessing database records.
+init_db()
+
 from langchain_core.messages import AIMessage, HumanMessage
 from app.agent.booking_agent import CampusBookingAgent
 from app.agent.autonomous_assistant import AutonomousAssistant
