@@ -844,6 +844,32 @@
     "avatar": "\ud83d\udee1\ufe0f",
     "created_at": "2026-11-25T01:34:13.710458"
   },
+  "sumit245@gmail.com": {
+    "user_id": "student_happy_789_63dabb",
+    "full_name": "happy",
+    "display_name": "happy",
+    "email": "sumit245@gmail.com",
+    "password_hash": "f40007913dd7618a0a4a3f4bdf70a352a789d2af5e0201bfc02b2ca2629b2005",
+    "account_type": "Student",
+    "student_id": "789",
+    "university": "Lovely Professional University",
+    "department": "Computer Science & Engineering",
+    "avatar": "\ud83d\udc68\u200d\ud83c\udf93",
+    "created_at": "2026-11-26T00:30:06.966675"
+  },
+  "rajesh3455@gmail.com": {
+    "user_id": "administrator_rajesh_ADM2026_069",
+    "full_name": "Rajesh",
+    "display_name": "Rajesh",
+    "email": "rajesh3455@gmail.com",
+    "password_hash": "dc5de15fb47b854954b0dea3ec9a8137f98f18ad1f9fb22e9dfae41cfd04d437",
+    "account_type": "Administrator",
+    "student_id": "ADM2026-069",
+    "university": "Lovely Professional University",
+    "department": "745",
+    "avatar": "\ud83d\udee1\ufe0f",
+    "created_at": "2026-11-26T00:33:07.089133"
+  },
   "student_a_iso@campus.edu": {
     "user_id": "student_same_name_student_ROLL_999",
     "full_name": "Same Name Student",
@@ -855,7 +881,7 @@
     "university": "Lovely Professional University",
     "department": "Computer Science & Engineering",
     "avatar": "\ud83d\udc68\u200d\ud83c\udf93",
-    "created_at": "2026-11-25T13:41:31.035821"
+    "created_at": "2026-11-26T01:29:24.789299"
   },
   "student_b_iso@campus.edu": {
     "user_id": "student_same_name_student_ROLL_999_e7311d",
@@ -868,6 +894,6 @@
     "university": "Lovely Professional University",
     "department": "Artificial Intelligence",
     "avatar": "\ud83d\udc68\u200d\ud83c\udf93",
-    "created_at": "2026-11-25T13:41:31.266641"
+    "created_at": "2026-11-26T01:29:24.975994"
   }
 }

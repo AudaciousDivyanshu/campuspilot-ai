@@ -690,77 +690,96 @@ if st.session_state.authenticated_user is None:
     # LEFT PANEL: BRANDING & PLATFORM CAPABILITIES
     # --------------------------------------------------------------------------
     with col_left_brand:
-        # Top Badges
+        # Premium SaaS Hero Section (Light Theme: Navy, Crimson Red & Subtle Pastels)
         st.markdown(
             clean_html(f"""
-            <div style="display: flex; gap: 0.6rem; align-items: center; margin-bottom: 1.1rem; flex-wrap: wrap;">
-                <span style="background: rgba(229, 9, 20, 0.08); color: #DC2626; border: 1px solid rgba(229, 9, 20, 0.25); font-size: 0.72rem; font-weight: 700; padding: 0.25rem 0.75rem; border-radius: 9999px; letter-spacing: 0.03em;">● Academic Operations 2026</span>
-                <span style="color: #64748B; font-size: 0.75rem; font-weight: 600;">v2.5 Production</span>
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
+            <div style="position: relative; overflow: hidden; background: linear-gradient(145deg, #FFFFFF 0%, #F8FAFC 65%, #FFF5F5 100%); border: 1px solid #E2E8F0; border-radius: 18px; padding: 1.5rem 1.45rem 1.35rem 1.45rem; margin-bottom: 1rem; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);">
+                <div style="position: absolute; top: -42px; right: -42px; width: 150px; height: 150px; background: radial-gradient(circle, rgba(229, 9, 20, 0.08) 0%, rgba(229, 9, 20, 0) 70%); pointer-events: none;"></div>
+                <div style="position: absolute; bottom: -36px; left: -36px; width: 130px; height: 130px; background: radial-gradient(circle, rgba(15, 23, 42, 0.05) 0%, rgba(15, 23, 42, 0) 70%); pointer-events: none;"></div>
 
-        # CampusPilot AI Logo & Title
-        st.markdown(
-            clean_html(f"""
-            <div style="margin-bottom: 1.2rem;">
-                <div style="display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.3rem;">
-                    <span style="font-size: 2.2rem; line-height: 1;">🎓</span>
-                    <span style="font-size: 1.85rem; font-weight: 800; color: #0F172A; letter-spacing: -0.02em;">CampusPilot AI</span>
+                <div style="display: flex; gap: 0.55rem; align-items: center; margin-bottom: 1.15rem; flex-wrap: wrap; position: relative;">
+                    <span style="display: inline-flex; align-items: center; gap: 0.35rem; background: rgba(229, 9, 20, 0.08); color: #DC2626; border: 1px solid rgba(229, 9, 20, 0.22); font-size: 0.72rem; font-weight: 700; padding: 0.28rem 0.75rem; border-radius: 9999px; letter-spacing: 0.03em;">
+                        <span style="font-size: 0.6rem;">●</span> Academic Operations 2026
+                    </span>
+                    <span style="display: inline-flex; align-items: center; background: #F1F5F9; color: #475569; border: 1px solid #E2E8F0; font-size: 0.72rem; font-weight: 600; padding: 0.28rem 0.7rem; border-radius: 9999px; letter-spacing: 0.01em;">
+                        Version 2.5 Production
+                    </span>
                 </div>
-                <div style="font-size: 0.95rem; font-weight: 700; color: #E50914; margin-bottom: 0.5rem; letter-spacing: -0.01em;">
-                    Smart Campus Facility & Operations Platform
+
+                <div style="display: flex; align-items: center; gap: 0.9rem; margin-bottom: 0.85rem; position: relative;">
+                    <div style="width: 52px; height: 52px; border-radius: 14px; background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%); display: flex; align-items: center; justify-content: center; font-size: 1.75rem; box-shadow: 0 6px 14px rgba(15, 23, 42, 0.14); flex-shrink: 0;">
+                        🎓
+                    </div>
+                    <div>
+                        <h1 style="font-size: 2.2rem; font-weight: 900; line-height: 1.08; margin: 0 0 0.22rem 0; letter-spacing: -0.03em; color: #0F172A;">
+                            CampusPilot <span style="color: #E50914;">AI</span>
+                        </h1>
+                        <div style="font-size: 0.94rem; font-weight: 700; color: #E50914; letter-spacing: -0.01em;">
+                            Smart Campus Facility &amp; Operations Platform
+                        </div>
+                    </div>
                 </div>
-                <p style="font-size: 0.88rem; color: #475569; line-height: 1.55; margin: 0;">
+
+                <p style="font-size: 0.89rem; color: #475569; line-height: 1.62; margin: 0 0 1rem 0; position: relative;">
                     CampusPilot AI connects students and faculty administrators with real-time availability across university computer laboratories, specialized engineering suites, and collaborative study rooms.
                 </p>
+
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; position: relative;">
+                    <span style="background: #FFFFFF; border: 1px solid #E2E8F0; color: #0F172A; font-size: 0.73rem; font-weight: 600; padding: 0.28rem 0.65rem; border-radius: 8px; box-shadow: 0 1px 2px rgba(15,23,42,0.03);">⚡ Live SQLite Sync</span>
+                    <span style="background: #FFFFFF; border: 1px solid #E2E8F0; color: #0F172A; font-size: 0.73rem; font-weight: 600; padding: 0.28rem 0.65rem; border-radius: 8px; box-shadow: 0 1px 2px rgba(15,23,42,0.03);">🔒 Role-Based Access</span>
+                    <span style="background: #FFFFFF; border: 1px solid #E2E8F0; color: #0F172A; font-size: 0.73rem; font-weight: 600; padding: 0.28rem 0.65rem; border-radius: 8px; box-shadow: 0 1px 2px rgba(15,23,42,0.03);">🤖 Gemini AI Assistant</span>
+                </div>
             </div>
             """),
             unsafe_allow_html=True,
         )
 
-        # Key Features Box
+        # Core Platform Capabilities Card
         st.markdown(
             clean_html(f"""
-            <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 14px; padding: 1.15rem; margin-bottom: 1rem; box-shadow: 0 2px 8px rgba(15,23,42,0.04);">
-                <div style="font-size: 0.75rem; font-weight: 800; color: #E50914; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.85rem;">
-                    Core Platform Capabilities
+            <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 1.2rem 1.25rem; margin-bottom: 0.95rem; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);">
+                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 0.7rem; margin-bottom: 0.85rem; border-bottom: 1px solid #F1F5F9;">
+                    <span style="font-size: 0.74rem; font-weight: 800; color: #0F172A; text-transform: uppercase; letter-spacing: 0.06em;">
+                        Core Platform Capabilities
+                    </span>
+                    <span style="font-size: 0.7rem; font-weight: 700; color: #E50914; background: rgba(229, 9, 20, 0.07); padding: 0.15rem 0.5rem; border-radius: 6px;">
+                        5 Modules
+                    </span>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 0.85rem;">
-                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(229, 9, 20, 0.08); color: #E50914; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">⚡</span>
+                    <div style="display: flex; gap: 0.8rem; align-items: flex-start;">
+                        <span style="background: #FEF2F2; color: #E50914; border: 1px solid #FECACA; border-radius: 10px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">⚡</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Real-time Lab & Room Availability</div>
-                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Live workstation counts and automated schedule conflict checking across all campus zones.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A; margin-bottom: 0.1rem;">Real-time Lab &amp; Room Availability</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.45;">Live workstation counts and automated schedule conflict checking across all campus zones.</div>
                         </div>
                     </div>
-                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(16,185,129,0.1); color: #059669; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">📅</span>
+                    <div style="display: flex; gap: 0.8rem; align-items: flex-start;">
+                        <span style="background: #ECFDF5; color: #059669; border: 1px solid #A7F3D0; border-radius: 10px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">📅</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Smart Booking Management</div>
-                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Zero double-booking guarantee with automated slot verification and instant confirmation ID receipts.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A; margin-bottom: 0.1rem;">Smart Booking Management</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.45;">Zero double-booking guarantee with automated slot verification and instant confirmation ID receipts.</div>
                         </div>
                     </div>
-                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(229, 9, 20, 0.08); color: #DC2626; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🤖</span>
+                    <div style="display: flex; gap: 0.8rem; align-items: flex-start;">
+                        <span style="background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; border-radius: 10px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🤖</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Gemini AI Campus Assistant</div>
-                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Autonomous natural language request parsing for equipment specs, capacity, and smart recommendations.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A; margin-bottom: 0.1rem;">Gemini AI Campus Assistant</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.45;">Autonomous natural language request parsing for equipment specs, capacity, and smart recommendations.</div>
                         </div>
                     </div>
-                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(245,158,11,0.1); color: #D97706; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🛡️</span>
+                    <div style="display: flex; gap: 0.8rem; align-items: flex-start;">
+                        <span style="background: #FFFBEB; color: #D97706; border: 1px solid #FDE68A; border-radius: 10px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🛡️</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Role-Based Access Control</div>
-                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Dedicated Student workflows and Faculty/Administrator approval & facility override panels.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A; margin-bottom: 0.1rem;">Role-Based Access Control</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.45;">Dedicated Student workflows and Faculty/Administrator approval &amp; facility override panels.</div>
                         </div>
                     </div>
-                    <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                        <span style="background: rgba(16,185,129,0.1); color: #059669; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🏖️</span>
+                    <div style="display: flex; gap: 0.8rem; align-items: flex-start;">
+                        <span style="background: #EFF6FF; color: #2563EB; border: 1px solid #BFDBFE; border-radius: 10px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">🏖️</span>
                         <div>
-                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A;">Automated Student Leave Policy</div>
-                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.4;">Instant rule-based auto-acceptance for academic & medical leaves with full admin oversight.</div>
+                            <div style="font-size: 0.86rem; font-weight: 700; color: #0F172A; margin-bottom: 0.1rem;">Student Leave &amp; Approval Workflow</div>
+                            <div style="font-size: 0.78rem; color: #64748B; line-height: 1.45;">Structured academic &amp; medical leave applications with live administrator review and feedback.</div>
                         </div>
                     </div>
                 </div>
@@ -772,8 +791,8 @@ if st.session_state.authenticated_user is None:
         # Subtle Bottom Endorsement Card
         st.markdown(
             clean_html(f"""
-            <div style="background: #F1F5F9; border: 1px dashed #CBD5E1; border-radius: 12px; padding: 0.85rem 1rem;">
-                <div style="font-size: 0.78rem; color: #64748B; display: flex; align-items: center; gap: 0.5rem; line-height: 1.45;">
+            <div style="background: linear-gradient(135deg, #F8FAFC 0%, #F1F5F9 100%); border: 1px solid #E2E8F0; border-radius: 12px; padding: 0.85rem 1.05rem;">
+                <div style="font-size: 0.78rem; color: #475569; display: flex; align-items: center; gap: 0.6rem; line-height: 1.45;">
                     <span style="font-size: 1.05rem;">✨</span>
                     <span>Trusted by university academic departments, computing laboratories, and student study centers across campus.</span>
                 </div>
