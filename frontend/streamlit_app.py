@@ -1007,14 +1007,14 @@ if st.session_state.authenticated_user is None:
                 # Full Name
                 reg_fullname = st.text_input(
                     "Full Legal Name *",
-                    placeholder="e.g. Divyanshu Verma",
+                    placeholder="Enter your full name",
                     key="create_fullname_input",
                 )
 
                 # University Email
                 reg_email = st.text_input(
                     "University Email *",
-                    placeholder="e.g. divyanshu@campus.edu or student@lpu.in",
+                    placeholder="Enter your university email",
                     key="create_email_input",
                 )
 
@@ -1023,7 +1023,7 @@ if st.session_state.authenticated_user is None:
                 with c_sid:
                     reg_student_id = st.text_input(
                         "Student ID / Roll No *",
-                        placeholder="e.g. CS2026-088",
+                        placeholder="Enter your student ID",
                         key="create_studentid_input",
                     )
                 with c_dept:
@@ -1036,6 +1036,8 @@ if st.session_state.authenticated_user is None:
                             "Information Technology",
                             "Mechanical Engineering",
                         ],
+                        index=None,
+                        placeholder="Select your department",
                         key="create_dept_input",
                     )
 
@@ -1045,14 +1047,14 @@ if st.session_state.authenticated_user is None:
                     reg_password = st.text_input(
                         "Password *",
                         type="default" if st.session_state.get("show_reg_pwd_check") else "password",
-                        placeholder="Create secure password",
+                        placeholder="Create a password",
                         key="create_pwd_input",
                     )
                 with c_pwd2:
                     reg_confirm_password = st.text_input(
                         "Confirm Password *",
                         type="default" if st.session_state.get("show_reg_pwd_check") else "password",
-                        placeholder="Re-enter password",
+                        placeholder="Confirm your password",
                         key="create_pwd_confirm_input",
                     )
 
@@ -1095,7 +1097,7 @@ if st.session_state.authenticated_user is None:
                 btn_create = st.button("🚀 Create Student Account & Enter Dashboard", type="primary", use_container_width=True, key="btn_create_submit")
 
                 if btn_create:
-                    if not reg_fullname.strip() or not reg_email.strip() or not reg_password:
+                    if not reg_fullname.strip() or not reg_email.strip() or not reg_password or not reg_department:
                         st.error("Please fill in all required fields marked with *.")
                     elif not reg_terms:
                         st.error("Please accept the Terms of Service to create an account.")
@@ -1141,14 +1143,14 @@ if st.session_state.authenticated_user is None:
                 # Full Name
                 reg_admin_fullname = st.text_input(
                     "Full Legal Name *",
-                    placeholder="e.g. Dr. Rajesh Sharma",
+                    placeholder="Enter your full name",
                     key="create_admin_fullname_input",
                 )
 
                 # Administrator Email
                 reg_admin_email = st.text_input(
                     "Administrator Email *",
-                    placeholder="e.g. rajesh.sharma@campus.edu",
+                    placeholder="Enter your official university email",
                     key="create_admin_email_input",
                 )
 
@@ -1157,13 +1159,13 @@ if st.session_state.authenticated_user is None:
                 with c_adept:
                     reg_admin_dept = st.text_input(
                         "Department / Designation *",
-                        placeholder="e.g. Computer Science / HOD or Operations",
+                        placeholder="Enter your department or designation",
                         key="create_admin_dept_input",
                     )
                 with c_aempid:
                     reg_admin_empid = st.text_input(
                         "Faculty / Employee ID (Optional)",
-                        placeholder="e.g. FAC2026-102",
+                        placeholder="Enter your administrator ID",
                         key="create_admin_empid_input",
                     )
 
@@ -1173,14 +1175,14 @@ if st.session_state.authenticated_user is None:
                     reg_admin_pwd = st.text_input(
                         "Password *",
                         type="default" if st.session_state.get("show_admin_reg_pwd_check") else "password",
-                        placeholder="Create secure password",
+                        placeholder="Create a password",
                         key="create_admin_pwd_input",
                     )
                 with c_apwd2:
                     reg_admin_pwd_confirm = st.text_input(
                         "Confirm Password *",
                         type="default" if st.session_state.get("show_admin_reg_pwd_check") else "password",
-                        placeholder="Re-enter password",
+                        placeholder="Confirm your password",
                         key="create_admin_pwd_confirm_input",
                     )
 
